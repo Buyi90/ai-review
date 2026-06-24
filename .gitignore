@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.oobe_done
+data/history.json
+data/blank_reference.json

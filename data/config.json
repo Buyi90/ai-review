@@ -1,0 +1,137 @@
+{
+  "active_preset": "默认配置",
+  "active_provider": "火山引擎",
+  "providers": [
+    {
+      "name": "5plus1官方",
+      "endpoint": "https://api.ai.five-plus-one.com/v1/chat/completions",
+      "api_key": "",
+      "model": "aimarker-fast",
+      "reasoning_effort": "minimal",
+      "models": [
+        "aimarker-fast",
+        "aimarker-pro"
+      ]
+    },
+    {
+      "name": "火山引擎",
+      "endpoint": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "api_key": "",
+      "model": "doubao-seed-2-0-lite-260428",
+      "reasoning_effort": "minimal",
+      "models": [
+        "doubao-seed-2-0-lite-260428",
+        "doubao-seed-2-0-pro-260215"
+      ]
+    },
+    {
+      "name": "OpenAI兼容",
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "api_key": "",
+      "model": "gpt-4o",
+      "reasoning_effort": "minimal",
+      "models": [
+        "gpt-4o",
+        "gpt-4o-mini"
+      ]
+    },
+    {
+      "name": "自定义服务商",
+      "endpoint": "",
+      "api_key": "",
+      "model": "",
+      "reasoning_effort": "minimal",
+      "models": []
+    }
+  ],
+  "question": "",
+  "answer": "第1空：①\n第2空：②\n第3空：胞嘧啶脱氧核苷酸\n第4空：氢键\n第5空：解旋酶\n第6空：DNA 聚合酶\n第7空：半保留复制、边解旋边复制、多起点复制\n第8空：1/150\n第9空：7%\n第10空：900",
+  "rubric": "每题一分",
+  "material_images": [],
+  "scoring": {
+    "max_score": 10.0,
+    "round_step": 1.0,
+    "round_method": "round",
+    "diligence_enabled": false,
+    "diligence_max_bonus": 3.0,
+    "diligence_decay_power": 2.0,
+    "diligence_criteria": "字数较多且书写较为工整",
+    "units": []
+  },
+  "workflow": {
+    "mode": "normal",
+    "primary_enabled": true,
+    "dual_enabled": false,
+    "arbitration_enabled": false,
+    "dual_threshold": 2.0,
+    "primary_provider_name": "火山引擎",
+    "secondary_provider_name": "5plus1官方",
+    "arbitration_provider_name": "5plus1官方",
+    "secondary_provider": {
+      "name": "5plus1官方",
+      "endpoint": "https://api.ai.five-plus-one.com/v1/chat/completions",
+      "api_key": "",
+      "model": "aimarker-fast",
+      "reasoning_effort": "minimal",
+      "models": [
+        "aimarker-fast",
+        "aimarker-pro"
+      ]
+    },
+    "arbitration_provider": {
+      "name": "5plus1官方",
+      "endpoint": "https://api.ai.five-plus-one.com/v1/chat/completions",
+      "api_key": "",
+      "model": "aimarker-fast",
+      "reasoning_effort": "minimal",
+      "models": [
+        "aimarker-fast",
+        "aimarker-pro"
+      ]
+    },
+    "target_count_enabled": false,
+    "target_count": 0,
+    "retry_limit": 5,
+    "confirm_before_submit": true,
+    "normal_countdown": 5,
+    "unattended_countdown": 1,
+    "next_paper_delay": 0.8
+  },
+  "boxes": [
+    {
+      "name": "识别框",
+      "kind": "recognition",
+      "x": 213,
+      "y": 179,
+      "width": 432,
+      "height": 766,
+      "color": "#2e7d32",
+      "enabled": true
+    },
+    {
+      "name": "打分框",
+      "kind": "score",
+      "x": 1768,
+      "y": 272,
+      "width": 40,
+      "height": 30,
+      "color": "#1565c0",
+      "enabled": true
+    },
+    {
+      "name": "提交框",
+      "kind": "submit",
+      "x": 1815,
+      "y": 420,
+      "width": 57,
+      "height": 30,
+      "color": "#ef6c00",
+      "enabled": true
+    }
+  ],
+  "preprocess_level": 1,
+  "recognition_margin": 0,
+  "blank_detection_enabled": false,
+  "blank_threshold": 0.01,
+  "save_images": true
+}
