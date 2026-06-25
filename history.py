@@ -82,6 +82,78 @@ def export_html(path: Path | None = None) -> Path:
     return target
 
 
+def export_docx(path: Path | None = None) -> Path:
+    records = load_history()
+    target = path or DATA_DIR / f"评阅历史_{time.strftime('%Y%m%d_%H%M%S')}.docx"
+    try:
+        from docx import Document
+    except Exception:
+        return export_html(target.with_suffix(".html"))
+    doc = Document()
+    doc.add_heading("评阅历史", level=1)
+    table = doc.add_table(rows=1, cols=7)
+    table.style = "Table Grid"
+    headers = ["时间", "方案", "模式", "AI分数", "最终分数", "识别答案", "评语"]
+    for cell, header in zip(table.rows[0].cells, headers):
+        cell.text = header
+    for r in records:
+        cells = table.add_row().cells
+        values = [
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.get("timestamp", 0))),
+            r.get("preset", ""),
+            r.get("mode", ""),
+            r.get("ai_score", ""),
+            r.get("final_score", ""),
+            r.get("student_answer", ""),
+            r.get("comment", ""),
+        ]
+        for cell, value in zip(cells, values):
+            cell.text = str(value)
+    doc.save(target)
+    return target
+
+
+def export_xlsx(path: Path | None = None) -> Path:
+    records = load_history()
+    target = path or DATA_DIR / f"评阅历史_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
+    try:
+        from openpyxl import Workbook
+    except Exception:
+        return export_csv(target.with_suffix(".csv"))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "评阅历史"
+    headers = ["时间", "方案", "模式", "AI分数", "最终分数", "识别答案", "评语", "是否纠错", "小题得分", "勤勉加分", "双评结果"]
+    ws.append(headers)
+    for r in records:
+        dual = r.get("dual_eval") or {}
+        ws.append([
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.get("timestamp", 0))),
+            r.get("preset", ""),
+            r.get("mode", ""),
+            r.get("ai_score", ""),
+            r.get("final_score", ""),
+            r.get("student_answer", ""),
+            r.get("comment", ""),
+            "是" if r.get("corrected") else "否",
+            _sub_score_text(r.get("sub_scores")),
+            r.get("bonus", ""),
+            dual.get("result", ""),
+        ])
+    for column in ws.columns:
+        letter = column[0].column_letter
+        width = min(max(len(str(cell.value or "")) for cell in column) + 2, 60)
+        ws.column_dimensions[letter].width = width
+    wb.save(target)
+    return target
+
+
+def export_pdf(path: Path | None = None) -> Path:
+    # PDF 中文字体依赖较重；当前先导出为浏览器可打印成 PDF 的 HTML，避免乱码。
+    target = path or DATA_DIR / f"评阅历史_{time.strftime('%Y%m%d_%H%M%S')}.html"
+    return export_html(target)
+
+
 def _esc(value: Any) -> str:
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 

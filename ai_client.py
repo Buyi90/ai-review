@@ -21,11 +21,29 @@ def _field_text(value: str) -> str:
     return value.strip() if value else ""
 
 
-def build_prompt(config: AppConfig) -> str:
+def _context_text(config: AppConfig) -> str:
+    parts = []
+    if _field_text(config.grade_level):
+        parts.append(f"年级：{config.grade_level}")
+    if _field_text(config.subject):
+        parts.append(f"学科：{config.subject}")
+    if _field_text(config.question_type):
+        parts.append(f"题型：{config.question_type}")
+    return "\n".join(parts)
+
+
+def build_prompt(config: AppConfig, student_text: str | None = None) -> str:
     max_score = config.scoring.max_score
     if config.scoring.units:
         max_score = sum(u.max_score for u in config.scoring.units)
-    prompt = "你是一位严格的阅卷老师。请只根据截图中识别框内的学生答案进行 OCR 和评分。\n\n===== 输入信息 ====="
+    if student_text is None:
+        prompt = "你是一位严格的阅卷老师。请只根据截图中识别框内的学生答案进行 OCR 和评分。\n\n===== 输入信息 ====="
+    else:
+        prompt = "你是一位严格的阅卷老师。学生答案已经由 OCR 模型识别，请根据识别文本评分；无法确认的文字按不确定处理，不要擅自补全。\n\n===== 输入信息 ====="
+        prompt += f"\n【学生答案OCR文本】\n{student_text.strip() or '未能识别'}"
+    context = _context_text(config)
+    if context:
+        prompt += f"\n【题目信息】\n{context}"
     if _field_text(config.question):
         prompt += f"\n【题目】\n{config.question}"
     if _field_text(config.answer):
@@ -48,6 +66,15 @@ def build_prompt(config: AppConfig) -> str:
     return prompt
 
 
+def build_ocr_prompt(config: AppConfig) -> str:
+    context = _context_text(config)
+    prompt = "请只识别截图中答题卡识别框内的学生手写或打印答案，忽略打分框、提交按钮、网页导航和无关内容。"
+    if context:
+        prompt += f"\n题目背景：\n{context}"
+    prompt += "\n输出要求：只输出识别到的学生答案文本；如果完全无法识别，输出“未能识别”。"
+    return prompt
+
+
 def _image_content_from_b64(image_b64: str) -> dict[str, Any]:
     return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
 
@@ -65,13 +92,14 @@ def _material_image_b64s(config: AppConfig) -> list[str]:
     return values
 
 
-def call_openai_compatible(provider: Provider, prompt: str, image_b64: str, on_stream: StreamCallback | None = None, extra_image_b64s: list[str] | None = None) -> str:
+def call_openai_compatible(provider: Provider, prompt: str, image_b64: str | None = None, on_stream: StreamCallback | None = None, extra_image_b64s: list[str] | None = None) -> str:
     if not provider.api_key:
         raise RuntimeError("请先填写 API Key")
     content = [{"type": "text", "text": prompt}]
     for extra in extra_image_b64s or []:
         content.append(_image_content_from_b64(extra))
-    content.append(_image_content_from_b64(image_b64))
+    if image_b64:
+        content.append(_image_content_from_b64(image_b64))
     body: dict[str, Any] = {
         "model": provider.model,
         "messages": [{"role": "user", "content": content}],
@@ -95,13 +123,13 @@ def call_openai_compatible(provider: Provider, prompt: str, image_b64: str, on_s
     return text
 
 
-def test_provider(provider: Provider) -> str:
+def test_provider(provider: Provider, message: str = "请只回复：连接成功") -> str:
     # 服务商测试不带图片，便于快速验证 endpoint、key、model 是否可用。
     if not provider.api_key:
         raise RuntimeError("请先填写 API Key")
     body: dict[str, Any] = {
         "model": provider.model,
-        "messages": [{"role": "user", "content": "请只回复：连接成功"}],
+        "messages": [{"role": "user", "content": message}],
         "max_tokens": 16,
         "stream": False,
     }
@@ -170,10 +198,30 @@ def parse_response(text: str, config: AppConfig) -> GradeResult:
     )
 
 
-def grade_image(config: AppConfig, image, provider: Provider, on_stream: StreamCallback | None = None) -> GradeResult:
-    prompt = build_prompt(config)
-    raw = call_openai_compatible(provider, prompt, image_to_base64(image), on_stream, _material_image_b64s(config))
+def recognize_image(config: AppConfig, image, provider: Provider, on_stream: StreamCallback | None = None) -> str:
+    raw = call_openai_compatible(provider, build_ocr_prompt(config), image_to_base64(image), on_stream)
+    return raw.strip() or "未能识别"
+
+
+def grade_image(config: AppConfig, image, provider: Provider, on_stream: StreamCallback | None = None, student_text: str | None = None) -> GradeResult:
+    prompt = build_prompt(config, student_text)
+    if student_text is None:
+        raw = call_openai_compatible(provider, prompt, image_to_base64(image), on_stream, _material_image_b64s(config))
+    else:
+        # 独立 OCR 模式面向 DeepSeek 等纯文本评分模型，只传识别文本，不再传截图。
+        raw = call_openai_compatible(provider, prompt, None, on_stream, None)
     return parse_response(raw, config)
+
+
+def grade_with_optional_ocr(config: AppConfig, image, provider: Provider, on_stream: StreamCallback | None = None) -> GradeResult:
+    if config.workflow.recognition_mode != "ocr_first":
+        return grade_image(config, image, provider, on_stream)
+    student_text = recognize_image(config, image, config.workflow.ocr_provider, on_stream)
+    if on_stream:
+        on_stream(f"\n\n【独立OCR结果】\n{student_text}\n")
+    result = grade_image(config, image, provider, on_stream, student_text=student_text)
+    result.student_answer = result.student_answer if result.student_answer and result.student_answer != "未能识别" else student_text
+    return result
 
 
 def build_arbitration_prompt(config: AppConfig, a: GradeResult, b: GradeResult) -> str:
@@ -187,10 +235,10 @@ def build_arbitration_prompt(config: AppConfig, a: GradeResult, b: GradeResult) 
 
 
 def grade_dual(config: AppConfig, image, provider: Provider, on_stream: StreamCallback | None = None) -> GradeResult:
-    first = grade_image(config, image, provider, on_stream)
+    first = grade_with_optional_ocr(config, image, provider, on_stream)
     if not config.workflow.dual_enabled:
         return first
-    second = grade_image(config, image, config.workflow.secondary_provider, None)
+    second = grade_with_optional_ocr(config, image, config.workflow.secondary_provider, None)
     if first.score is None:
         return second
     if second.score is None:
@@ -209,7 +257,10 @@ def grade_dual(config: AppConfig, image, provider: Provider, on_stream: StreamCa
         first.dual_eval = {"scoreA": score_a, "scoreB": score_b, "diff": diff, "result": "未启用仲裁，取平均"}
         return first
     prompt = build_arbitration_prompt(config, first, second)
-    raw = call_openai_compatible(config.workflow.arbitration_provider, prompt, image_to_base64(image), on_stream, _material_image_b64s(config))
+    if config.workflow.recognition_mode == "ocr_first":
+        raw = call_openai_compatible(config.workflow.arbitration_provider, prompt, None, on_stream, None)
+    else:
+        raw = call_openai_compatible(config.workflow.arbitration_provider, prompt, image_to_base64(image), on_stream, _material_image_b64s(config))
     arb = parse_response(raw, config)
     arb.dual_eval = {"scoreA": first.score, "scoreB": second.score, "diff": diff, "result": "仲裁", "arbScore": arb.score}
     return arb

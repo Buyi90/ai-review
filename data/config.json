@@ -11,18 +11,20 @@
       "models": [
         "aimarker-fast",
         "aimarker-pro"
-      ]
+      ],
+      "source": "network"
     },
     {
       "name": "火山引擎",
       "endpoint": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
-      "api_key": "",
+      "api_key": "74ceeef5-05fb-4a8e-b5d0-16e755c1a8e7",
       "model": "doubao-seed-2-0-lite-260428",
       "reasoning_effort": "minimal",
       "models": [
         "doubao-seed-2-0-lite-260428",
         "doubao-seed-2-0-pro-260215"
-      ]
+      ],
+      "source": "network"
     },
     {
       "name": "OpenAI兼容",
@@ -33,7 +35,8 @@
       "models": [
         "gpt-4o",
         "gpt-4o-mini"
-      ]
+      ],
+      "source": "network"
     },
     {
       "name": "自定义服务商",
@@ -41,9 +44,13 @@
       "api_key": "",
       "model": "",
       "reasoning_effort": "minimal",
-      "models": []
+      "models": [],
+      "source": "network"
     }
   ],
+  "grade_level": "",
+  "subject": "",
+  "question_type": "",
   "question": "",
   "answer": "第1空：①\n第2空：②\n第3空：胞嘧啶脱氧核苷酸\n第4空：氢键\n第5空：解旋酶\n第6空：DNA 聚合酶\n第7空：半保留复制、边解旋边复制、多起点复制\n第8空：1/150\n第9空：7%\n第10空：900",
   "rubric": "每题一分",
@@ -60,6 +67,7 @@
   },
   "workflow": {
     "mode": "normal",
+    "recognition_mode": "direct",
     "primary_enabled": true,
     "dual_enabled": false,
     "arbitration_enabled": false,
@@ -67,6 +75,19 @@
     "primary_provider_name": "火山引擎",
     "secondary_provider_name": "5plus1官方",
     "arbitration_provider_name": "5plus1官方",
+    "ocr_provider_name": "OpenAI兼容",
+    "ocr_provider": {
+      "name": "OpenAI兼容",
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "api_key": "",
+      "model": "gpt-4o",
+      "reasoning_effort": "minimal",
+      "models": [
+        "gpt-4o",
+        "gpt-4o-mini"
+      ],
+      "source": "network"
+    },
     "secondary_provider": {
       "name": "5plus1官方",
       "endpoint": "https://api.ai.five-plus-one.com/v1/chat/completions",
@@ -76,7 +97,8 @@
       "models": [
         "aimarker-fast",
         "aimarker-pro"
-      ]
+      ],
+      "source": "network"
     },
     "arbitration_provider": {
       "name": "5plus1官方",
@@ -87,7 +109,8 @@
       "models": [
         "aimarker-fast",
         "aimarker-pro"
-      ]
+      ],
+      "source": "network"
     },
     "target_count_enabled": false,
     "target_count": 0,
@@ -95,7 +118,10 @@
     "confirm_before_submit": true,
     "normal_countdown": 5,
     "unattended_countdown": 1,
-    "next_paper_delay": 0.8
+    "capture_delay": 0.5,
+    "scoring_delay": 0.0,
+    "next_paper_delay": 0.8,
+    "score_switch_mode": "single"
   },
   "boxes": [
     {

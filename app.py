@@ -9,17 +9,15 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-from ai_client import grade_dual, grade_image, test_provider
-from automation import fill_and_submit, fill_score
-from correction_dialog import CorrectionDialog
-from history import add_history, clear_history, export_csv, export_html, export_json
+from ai_client import grade_dual, grade_with_optional_ocr, test_provider
+from automation import fill_and_submit, fill_scores
+from history import add_history, clear_history, export_csv, export_docx, export_html, export_json, export_pdf, export_xlsx
 from image_tools import black_pixel_ratio, capture_region, image_to_base64, is_blank, preprocess_image
 from image_tools import image_quality_report
 from models import AppConfig, Provider, RegionBox, config_from_dict
 from overlay import RegionOverlay
 from scoring import apply_scoring
 from storage import CONFIG_FILE, PRESETS_FILE, clear_blank_reference, load_blank_reference, load_config, load_presets, save_blank_reference, save_config, save_presets
-from submit_dialog import SubmitDialog
 
 
 # 主 UI 使用标准库 tkinter，方便直接运行和打包为 exe。
@@ -93,14 +91,13 @@ class AIMarkerApp(tk.Tk):
         self.answer_view = tk.Text(left, wrap="word", height=6)
         self.answer_view.pack(fill="x", pady=(4, 0))
 
-        ttk.Button(right, text="开始批改", style="Primary.TButton", command=self.start_once).pack(fill="x", pady=4)
-        ttk.Button(right, text="连续批改", command=self.start_loop).pack(fill="x", pady=4)
-        ttk.Button(right, text="停止", command=self.stop).pack(fill="x", pady=4)
+        # 开始批改弹窗输入份数，直接进入连续批改模式
+        ttk.Button(right, text="开始批改", style="Primary.TButton", command=self.start_grading).pack(fill="x", pady=4)
+        ttk.Button(right, text="调试批改", command=self.debug_once).pack(fill="x", pady=4)
+        ttk.Button(right, text="停止批改", command=self.stop).pack(fill="x", pady=4)
+        ttk.Button(right, text="检查配置", command=self.check_readiness).pack(fill="x", pady=4)
         ttk.Separator(right).pack(fill="x", pady=10)
         ttk.Button(right, text="仅识别框截图", command=self.preview_capture).pack(fill="x", pady=4)
-        ttk.Button(right, text="填入当前分数", command=self.fill_current_score).pack(fill="x", pady=4)
-        ttk.Button(right, text="提交当前分数", command=self.submit_current_score).pack(fill="x", pady=4)
-        ttk.Button(right, text="分数有误", command=self.open_correction).pack(fill="x", pady=4)
         ttk.Separator(right).pack(fill="x", pady=10)
         ttk.Button(right, text="采集空白卡范本", command=self.capture_blank_reference).pack(fill="x", pady=4)
         ttk.Button(right, text="清除空白卡范本", command=lambda: (clear_blank_reference(), self.set_status("空白卡范本已清除"))).pack(fill="x", pady=4)
@@ -118,10 +115,16 @@ class AIMarkerApp(tk.Tk):
         self.primary_provider = tk.StringVar(value=self.config_data.workflow.primary_provider_name)
         self.secondary_provider = tk.StringVar(value=self.config_data.workflow.secondary_provider_name)
         self.arbitration_provider = tk.StringVar(value=self.config_data.workflow.arbitration_provider_name)
+        self.ocr_provider = tk.StringVar(value=self.config_data.workflow.ocr_provider_name)
         self.primary_model = tk.StringVar(value=(self.get_provider_by_name(self.primary_provider.get()) or self.get_active_provider()).model)
         self.secondary_model = tk.StringVar(value=(self.get_provider_by_name(self.secondary_provider.get()) or self.get_active_provider()).model)
         self.arbitration_model = tk.StringVar(value=(self.get_provider_by_name(self.arbitration_provider.get()) or self.get_active_provider()).model)
+        self.ocr_model = tk.StringVar(value=(self.get_provider_by_name(self.ocr_provider.get()) or self.get_active_provider()).model)
+        self.recognition_mode = tk.StringVar(value=self.config_data.workflow.recognition_mode)
         self.mode = tk.StringVar(value=self.config_data.workflow.mode)
+        self.grade_level = tk.StringVar(value=self.config_data.grade_level)
+        self.subject = tk.StringVar(value=self.config_data.subject)
+        self.question_type = tk.StringVar(value=self.config_data.question_type)
         self.max_score = tk.StringVar(value=str(self.config_data.scoring.max_score))
         self.round_step = tk.StringVar(value=str(self.config_data.scoring.round_step))
         self.round_method = tk.StringVar(value=self.config_data.scoring.round_method)
@@ -131,10 +134,10 @@ class AIMarkerApp(tk.Tk):
         self.preprocess = tk.IntVar(value=self.config_data.preprocess_level)
         self.recognition_margin = tk.StringVar(value=str(self.config_data.recognition_margin))
         self.blank_enabled = tk.BooleanVar(value=self.config_data.blank_detection_enabled)
-        self.confirm_submit = tk.BooleanVar(value=self.config_data.workflow.confirm_before_submit)
-        self.normal_countdown = tk.StringVar(value=str(self.config_data.workflow.normal_countdown))
-        self.unattended_countdown = tk.StringVar(value=str(self.config_data.workflow.unattended_countdown))
+        self.capture_delay = tk.StringVar(value=str(self.config_data.workflow.capture_delay))
+        self.scoring_delay = tk.StringVar(value=str(self.config_data.workflow.scoring_delay))
         self.next_paper_delay = tk.StringVar(value=str(self.config_data.workflow.next_paper_delay))
+        self.score_switch_mode = tk.StringVar(value=self.config_data.workflow.score_switch_mode)
         self.target_enabled = tk.BooleanVar(value=self.config_data.workflow.target_count_enabled)
         self.target_count = tk.StringVar(value=str(self.config_data.workflow.target_count))
 
@@ -148,6 +151,10 @@ class AIMarkerApp(tk.Tk):
         ttk.Checkbutton(form, text="启用仲裁", variable=self.arbitration_enabled).grid(row=row, column=1, sticky="w", pady=6)
         row += 1
         row = self._provider_model_row(form, row, "仲裁", self.arbitration_provider, self.arbitration_model)
+        ttk.Label(form, text="识别方式").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Combobox(form, textvariable=self.recognition_mode, values=["direct", "ocr_first"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
+        row = self._provider_model_row(form, row, "独立OCR", self.ocr_provider, self.ocr_model)
         self.dual_threshold = tk.StringVar(value=str(self.config_data.workflow.dual_threshold))
         row = self._entry(form, row, "仲裁阈值", self.dual_threshold)
         ttk.Label(form, text="批改模式").grid(row=row, column=0, sticky="w", pady=6)
@@ -169,17 +176,26 @@ class AIMarkerApp(tk.Tk):
         row = self._entry(form, row, "识别框内边距(px)", self.recognition_margin)
         ttk.Checkbutton(form, text="启用空白答题卡检测", variable=self.blank_enabled).grid(row=row, column=1, sticky="w", pady=6)
         row += 1
-        ttk.Checkbutton(form, text="提交前弹出确认窗口", variable=self.confirm_submit).grid(row=row, column=1, sticky="w", pady=6)
+        # 连续批改使用自动提交，不再需要人工确认和倒计时
+        row = self._entry(form, row, "取卡延时(秒)", self.capture_delay)
+        row = self._entry(form, row, "打分延时(秒)", self.scoring_delay)
+        row = self._entry(form, row, "批改间隔延时(秒)", self.next_paper_delay)
+        ttk.Label(form, text="多打分框切换").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Combobox(form, textvariable=self.score_switch_mode, values=["single", "tab", "enter", "space"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
         row += 1
-        row = self._entry(form, row, "普通模式倒计时(秒)", self.normal_countdown)
-        row = self._entry(form, row, "无人模式倒计时(秒)", self.unattended_countdown)
-        row = self._entry(form, row, "提交后等待下一份(秒)", self.next_paper_delay)
         ttk.Checkbutton(form, text="限制批阅份数", variable=self.target_enabled).grid(row=row, column=1, sticky="w", pady=6)
         row += 1
         row = self._entry(form, row, "目标份数", self.target_count)
 
         text_area = ttk.Frame(form)
         text_area.grid(row=0, column=2, rowspan=12, sticky="nsew", padx=(20, 0))
+        meta = ttk.Frame(text_area)
+        meta.pack(fill="x", pady=(0, 8))
+        for label, var in [("年级", self.grade_level), ("学科", self.subject), ("题型", self.question_type)]:
+            block = ttk.Frame(meta)
+            block.pack(side="left", fill="x", expand=True, padx=(0, 6))
+            ttk.Label(block, text=label).pack(anchor="w")
+            ttk.Entry(block, textvariable=var).pack(fill="x")
         self.question = self._labeled_text(text_area, "题目内容", self.config_data.question, 6)
         self.answer = self._labeled_text(text_area, "参考答案", self.config_data.answer, 6)
         self.rubric = self._labeled_text(text_area, "评分标准", self.config_data.rubric, 8)
@@ -196,7 +212,7 @@ class AIMarkerApp(tk.Tk):
 
         # 分小题评分来自脚本的 scoring.units，桌面端用表格维护。
         unit_panel = ttk.LabelFrame(form, text="分小题评分")
-        unit_panel.grid(row=12, column=0, columnspan=3, sticky="nsew", pady=(16, 0))
+        unit_panel.grid(row=row + 1, column=0, columnspan=3, sticky="nsew", pady=(16, 0))
         unit_bar = ttk.Frame(unit_panel)
         unit_bar.pack(fill="x", padx=8, pady=8)
         ttk.Button(unit_bar, text="添加小题", command=self.add_unit).pack(side="left", padx=4)
@@ -243,9 +259,14 @@ class AIMarkerApp(tk.Tk):
         self.provider_model_var = tk.StringVar()
         self.provider_models_var = tk.StringVar()
         self.provider_reasoning_var = tk.StringVar()
+        self.provider_source_var = tk.StringVar(value="network")
+        self.provider_test_prompt_var = tk.StringVar(value="请只回复：连接成功")
 
         row = 0
         row = self._entry(right, row, "名称", self.provider_name_var)
+        ttk.Label(right, text="模型来源").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Combobox(right, textvariable=self.provider_source_var, values=["network", "local", "lan", "custom"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
         row = self._entry(right, row, "API 端点", self.provider_endpoint_var)
         row = self._entry(right, row, "API Key", self.provider_key_var, show="*")
         ttk.Label(right, text="当前模型").grid(row=row, column=0, sticky="w", pady=6)
@@ -254,6 +275,7 @@ class AIMarkerApp(tk.Tk):
         row += 1
         row = self._entry(right, row, "模型列表(逗号分隔)", self.provider_models_var)
         row = self._entry(right, row, "推理强度", self.provider_reasoning_var)
+        row = self._entry(right, row, "测试对话", self.provider_test_prompt_var)
         ttk.Label(right, text="内置示例支持 5plus1 官方、火山方舟和 OpenAI 兼容接口；自定义服务商只要兼容 /chat/completions 即可。").grid(row=row, column=0, columnspan=2, sticky="w", pady=(16, 6))
         right.columnconfigure(1, weight=1)
         self.refresh_provider_tree()
@@ -285,6 +307,9 @@ class AIMarkerApp(tk.Tk):
         ttk.Button(bar, text="导出 JSON", command=lambda: self._export(export_json)).pack(side="left", padx=4)
         ttk.Button(bar, text="导出 CSV", command=lambda: self._export(export_csv)).pack(side="left", padx=4)
         ttk.Button(bar, text="导出 HTML", command=lambda: self._export(export_html)).pack(side="left", padx=4)
+        ttk.Button(bar, text="导出 Word", command=lambda: self._export(export_docx)).pack(side="left", padx=4)
+        ttk.Button(bar, text="导出 Excel", command=lambda: self._export(export_xlsx)).pack(side="left", padx=4)
+        ttk.Button(bar, text="导出 PDF", command=lambda: self._export(export_pdf)).pack(side="left", padx=4)
         ttk.Button(bar, text="清空历史", command=self.clear_history_records).pack(side="left", padx=4)
         self.history_text = tk.Text(tab, wrap="word")
         self.history_text.pack(fill="both", expand=True)
@@ -306,6 +331,7 @@ class AIMarkerApp(tk.Tk):
         ttk.Button(left, text="保存为当前方案", command=self.save_current_preset).pack(fill="x", pady=3)
         ttk.Button(left, text="另存为新方案", command=self.save_as_preset).pack(fill="x", pady=3)
         ttk.Button(left, text="删除选中方案", command=self.delete_selected_preset).pack(fill="x", pady=3)
+        ttk.Button(left, text="补足10套标准", command=self.ensure_ten_presets).pack(fill="x", pady=3)
         ttk.Button(left, text="导出全部配置", command=self.export_settings).pack(fill="x", pady=(12, 3))
         ttk.Button(left, text="导入配置", command=self.import_settings).pack(fill="x", pady=3)
 
@@ -357,14 +383,17 @@ class AIMarkerApp(tk.Tk):
         self.config_data.workflow.primary_provider_name = self.primary_provider.get()
         self.config_data.workflow.secondary_provider_name = self.secondary_provider.get()
         self.config_data.workflow.arbitration_provider_name = self.arbitration_provider.get()
+        self.config_data.workflow.ocr_provider_name = self.ocr_provider.get()
         self.config_data.workflow.secondary_provider = self.get_provider_by_name(self.secondary_provider.get()) or self.config_data.workflow.secondary_provider
         self.config_data.workflow.arbitration_provider = self.get_provider_by_name(self.arbitration_provider.get()) or self.config_data.workflow.arbitration_provider
+        self.config_data.workflow.ocr_provider = self.get_provider_by_name(self.ocr_provider.get()) or self.config_data.workflow.ocr_provider
         self.config_data.workflow.mode = self.mode.get()
+        self.config_data.workflow.recognition_mode = self.recognition_mode.get()
         self.config_data.workflow.dual_threshold = float(self.dual_threshold.get() or 2)
-        self.config_data.workflow.confirm_before_submit = self.confirm_submit.get()
-        self.config_data.workflow.normal_countdown = int(float(self.normal_countdown.get() or 0))
-        self.config_data.workflow.unattended_countdown = int(float(self.unattended_countdown.get() or 0))
+        self.config_data.workflow.capture_delay = float(self.capture_delay.get() or 0)
+        self.config_data.workflow.scoring_delay = float(self.scoring_delay.get() or 0)
         self.config_data.workflow.next_paper_delay = float(self.next_paper_delay.get() or 0.8)
+        self.config_data.workflow.score_switch_mode = self.score_switch_mode.get()
         self.config_data.workflow.target_count_enabled = self.target_enabled.get()
         self.config_data.workflow.target_count = int(float(self.target_count.get() or 0))
         self.config_data.scoring.max_score = float(self.max_score.get() or 0)
@@ -377,6 +406,9 @@ class AIMarkerApp(tk.Tk):
         self.config_data.recognition_margin = int(float(self.recognition_margin.get() or 0))
         self.config_data.blank_detection_enabled = self.blank_enabled.get()
         self.config_data.save_images = self.save_images.get()
+        self.config_data.grade_level = self.grade_level.get().strip()
+        self.config_data.subject = self.subject.get().strip()
+        self.config_data.question_type = self.question_type.get().strip()
         self.config_data.question = self.question.get("1.0", "end").strip()
         self.config_data.answer = self.answer.get("1.0", "end").strip()
         self.config_data.rubric = self.rubric.get("1.0", "end").strip()
@@ -392,10 +424,16 @@ class AIMarkerApp(tk.Tk):
         self.primary_provider.set(self.config_data.workflow.primary_provider_name)
         self.secondary_provider.set(self.config_data.workflow.secondary_provider_name)
         self.arbitration_provider.set(self.config_data.workflow.arbitration_provider_name)
+        self.ocr_provider.set(self.config_data.workflow.ocr_provider_name)
         self.primary_model.set((self.get_provider_by_name(self.primary_provider.get()) or self.get_active_provider()).model)
         self.secondary_model.set((self.get_provider_by_name(self.secondary_provider.get()) or self.get_active_provider()).model)
         self.arbitration_model.set((self.get_provider_by_name(self.arbitration_provider.get()) or self.get_active_provider()).model)
+        self.ocr_model.set((self.get_provider_by_name(self.ocr_provider.get()) or self.get_active_provider()).model)
         self.mode.set(self.config_data.workflow.mode)
+        self.recognition_mode.set(self.config_data.workflow.recognition_mode)
+        self.grade_level.set(self.config_data.grade_level)
+        self.subject.set(self.config_data.subject)
+        self.question_type.set(self.config_data.question_type)
         self.max_score.set(str(self.config_data.scoring.max_score))
         self.round_step.set(str(self.config_data.scoring.round_step))
         self.round_method.set(self.config_data.scoring.round_method)
@@ -406,10 +444,10 @@ class AIMarkerApp(tk.Tk):
         self.recognition_margin.set(str(self.config_data.recognition_margin))
         self.blank_enabled.set(self.config_data.blank_detection_enabled)
         self.dual_threshold.set(str(self.config_data.workflow.dual_threshold))
-        self.confirm_submit.set(self.config_data.workflow.confirm_before_submit)
-        self.normal_countdown.set(str(self.config_data.workflow.normal_countdown))
-        self.unattended_countdown.set(str(self.config_data.workflow.unattended_countdown))
+        self.capture_delay.set(str(self.config_data.workflow.capture_delay))
+        self.scoring_delay.set(str(self.config_data.workflow.scoring_delay))
         self.next_paper_delay.set(str(self.config_data.workflow.next_paper_delay))
+        self.score_switch_mode.set(self.config_data.workflow.score_switch_mode)
         self.target_enabled.set(self.config_data.workflow.target_count_enabled)
         self.target_count.set(str(self.config_data.workflow.target_count))
         self.question.delete("1.0", "end")
@@ -554,28 +592,213 @@ class AIMarkerApp(tk.Tk):
             img.save(path)
             self.set_status(f"截图已保存：{path}；质量：{report['level']}，尺寸 {report['width']}x{report['height']}")
 
-    def start_once(self) -> None:
+    def start_grading(self) -> None:
+        """执行全量配置检查后，开启连续批改。"""
         self.save_all()
+        
+        # 第一步：全量配置检查
+        problems = self._validate_ready_to_grade()
+        if problems:
+            messagebox.showerror("准备不足，无法启动批改", "\n\n".join(problems))
+            return
+        
+        # 第二步：快速预检（截一张图验证质量）
+        preview_ok = self._preview_before_grading()
+        if not preview_ok:
+            return
+        
+        # 第三步：确认开始
+        target = self.config_data.workflow.target_count if self.config_data.workflow.target_count_enabled else 0
+        msg = f"即将开始连续批改，目标份数：{target if target > 0 else '无限'}\n\n各项配置均已检查无误，点击确认开始自动批改。"
+        if messagebox.askokcancel("准备开始", msg):
+            self._start_continuous_grading()
+    
+    def _validate_ready_to_grade(self) -> list[str]:
+        """全量检查，确保所有批改必要条件都满足。返回问题列表。"""
+        problems = []
+        
+        # 检查三个操作框
+        recog_box = self.get_box("recognition")
+        score_box = self.get_box("score")
+        submit_box = self.get_box("submit")
+        
+        if not recog_box:
+            problems.append("❌ 识别框缺失\n请在主界面添加识别框，用于截取答题区域。")
+        elif recog_box.width < 50 or recog_box.height < 50:
+            problems.append("❌ 识别框过小\n识别框尺寸应至少 50×50px，请调整大小。")
+        
+        if not score_box:
+            problems.append("❌ 打分框缺失\n请添加打分框，AI 分数需要填入此区域。")
+        elif score_box.width < 30 or score_box.height < 20:
+            problems.append("❌ 打分框过小\n打分框应能容纳分数，请调整大小。")
+        
+        if not submit_box:
+            problems.append("❌ 提交框缺失\n请添加提交框，用于自动点击提交。")
+        elif submit_box.width < 40 or submit_box.height < 20:
+            problems.append("❌ 提交框过小\n提交框应能正常点击，请调整大小。")
+        
+        # 检查 AI 参数
+        if not self.config_data.workflow.primary_enabled:
+            problems.append('❌ 主评未启用\n请在配置面板勾选"启用主评"。')
+        else:
+            provider = self.get_active_provider()
+            if not provider.endpoint:
+                problems.append("❌ 主评 API 端点缺失\n请填写 API Endpoint。")
+            if not provider.api_key:
+                problems.append("❌ 主评 API Key 缺失\n请填写 API Key。")
+            if not provider.model:
+                problems.append("❌ 主评模型名称缺失\n请选择或填写模型名称。")
+        
+        # 检查 OCR 参数
+        if self.config_data.workflow.recognition_mode == "ocr_first":
+            ocr_provider = self.get_provider_by_name(self.config_data.workflow.ocr_provider_name)
+            if not ocr_provider:
+                problems.append("❌ OCR 服务商不存在\n请在配置面板检查 OCR 供应商设置。")
+            else:
+                if not ocr_provider.endpoint:
+                    problems.append("❌ OCR API 端点缺失\n请填写 OCR API Endpoint。")
+                if not ocr_provider.api_key:
+                    problems.append("❌ OCR API Key 缺失\n请填写 OCR API Key。")
+                if not ocr_provider.model:
+                    problems.append("❌ OCR 模型名称缺失\n请选择或填写 OCR 模型。")
+        
+        # 检查评分依据
+        if not (self.config_data.question or self.config_data.answer or self.config_data.rubric or self.config_data.material_images):
+            problems.append("❌ 评分依据不足\n请至少填写题目、参考答案或评分标准之一。")
+        
+        # 检查批改份数
+        if self.config_data.workflow.target_count_enabled:
+            if self.config_data.workflow.target_count <= 0:
+                problems.append("❌ 目标份数设置错误\n启用限制时，份数应大于 0。")
+        
+        return problems
+    
+    def _preview_before_grading(self) -> bool:
+        """截一张图并检查质量，确保识别框位置和大小合适。"""
+        try:
+            recog_box = self.get_box("recognition")
+            if not recog_box:
+                messagebox.showerror("预检失败", "无法找到识别框")
+                return False
+            
+            # 截图
+            img = preprocess_image(
+                capture_region(recog_box, self.config_data.recognition_margin),
+                self.config_data.preprocess_level
+            )
+            quality = image_quality_report(img)
+            
+            # 检查图像质量
+            issues = []
+            if quality['width'] < 50 or quality['height'] < 50:
+                issues.append(f"图像尺寸过小：{quality['width']}×{quality['height']}px")
+            
+            if quality['dark_ratio'] > 0.95:
+                issues.append("图像过暗（暗像素占比 >95%），可能无法识别")
+            elif quality['dark_ratio'] < 0.05:
+                issues.append("图像过亮（暗像素占比 <5%），可能无法识别")
+            
+            if quality['level'] == "低":
+                issues.append("图像质量评估为低，建议检查光线和对焦")
+            
+            if issues:
+                msg = "识别框预检发现问题：\n\n" + "\n".join(f"• {i}" for i in issues)
+                msg += "\n\n是否继续？（建议先调整截图框位置或光线）"
+                if not messagebox.askokcancel("预检警告", msg):
+                    return False
+            else:
+                messagebox.showinfo("预检通过", f"识别框质量良好\n尺寸：{quality['width']}×{quality['height']}px，质量：{quality['level']}\n准备好了，点确认开始")
+            
+            return True
+        except Exception as e:
+            messagebox.showerror("预检出错", f"截图或质量检查失败：{str(e)}")
+            return False
+    
+    def _start_continuous_grading(self) -> None:
+        """开启连续批改模式，直接自动填分和提交。"""
+        self.save_all()
+        problems = self.validate_config(require_submit=False)
+        if problems:
+            messagebox.showerror("配置未就绪", "\n".join(problems))
+            return
+        self.running = True
+        self.continuous = True
+        self.skip_blank_once = False
+        self.loop_count = 0
+        # 自动填分提交，不需要确认窗口
+        threading.Thread(target=self._loop_worker, daemon=True).start()
+    
+    def start_once(self) -> None:
+        """调试专用：单份批改，不自动提交。"""
+        self.save_all()
+        problems = self.validate_config(require_submit=False)
+        if problems:
+            messagebox.showerror("配置未就绪", "\n".join(problems))
+            return
         self.running = True
         self.continuous = False
         self.skip_blank_once = False
-        threading.Thread(target=self._grade_once_worker, daemon=True).start()
+        threading.Thread(target=self._grade_once_worker, kwargs={"auto_submit": False}, daemon=True).start()
 
-    def start_loop(self) -> None:
+    def debug_once(self) -> None:
         self.save_all()
+        problems = self.validate_config(require_submit=False)
+        if problems:
+            messagebox.showerror("调试批改不可用", "\n".join(problems))
+            return
         self.running = True
-        self.continuous = True
-        self.loop_count = 0
+        self.continuous = False
         self.skip_blank_once = False
-        if self.config_data.workflow.confirm_before_submit:
-            threading.Thread(target=self._grade_once_worker, kwargs={"auto_submit": True}, daemon=True).start()
-        else:
-            threading.Thread(target=self._loop_worker, daemon=True).start()
+        self.set_status("调试批改：仅处理一份，不自动提交")
+        threading.Thread(target=self._grade_once_worker, kwargs={"auto_submit": False}, daemon=True).start()
 
     def stop(self) -> None:
         self.running = False
         self.continuous = False
         self.set_status("已停止")
+
+    def validate_config(self, require_submit: bool) -> list[str]:
+        problems: list[str] = []
+        if not self.get_box("recognition"):
+            problems.append("缺少识别框。")
+        if require_submit:
+            if not self.get_box("score"):
+                problems.append("连续自动提交需要打分框。")
+            if not self.get_box("submit"):
+                problems.append("连续自动提交需要提交框。")
+        if not self.config_data.workflow.primary_enabled:
+            problems.append("主评未启用。")
+        provider = self.get_active_provider()
+        if not provider.endpoint:
+            problems.append("主评服务商缺少 API 端点。")
+        if not provider.api_key:
+            problems.append("主评服务商缺少 API Key。")
+        if not provider.model:
+            problems.append("主评服务商缺少模型名称。")
+        if self.config_data.workflow.recognition_mode == "ocr_first":
+            ocr_provider = self.get_provider_by_name(self.config_data.workflow.ocr_provider_name)
+            if not ocr_provider:
+                problems.append("独立 OCR 服务商不存在。")
+            else:
+                if not ocr_provider.endpoint:
+                    problems.append("独立 OCR 服务商缺少 API 端点。")
+                if not ocr_provider.api_key:
+                    problems.append("独立 OCR 服务商缺少 API Key。")
+                if not ocr_provider.model:
+                    problems.append("独立 OCR 服务商缺少模型名称。")
+        if not (self.config_data.question or self.config_data.answer or self.config_data.rubric or self.config_data.material_images):
+            problems.append("题目、参考答案、评分标准或评分材料图片至少填写一项。")
+        return problems
+
+    def check_readiness(self) -> None:
+        self.save_all()
+        problems = self.validate_config(require_submit=False)
+        if problems:
+            messagebox.showwarning("配置未就绪", "\n".join(problems))
+            self.set_status("配置未就绪")
+            return
+        messagebox.showinfo("配置检查", "基础配置已就绪。调试批改不会要求打分框和提交框；连续自动提交前请确认操作框位置。")
+        self.set_status("配置已就绪")
 
     def _loop_worker(self) -> None:
         target = self.config_data.workflow.target_count if self.config_data.workflow.target_count_enabled else 0
@@ -598,6 +821,10 @@ class AIMarkerApp(tk.Tk):
             submit_box = self.get_box("submit")
             if not recog:
                 raise RuntimeError("缺少识别框")
+            capture_wait = max(0, self.config_data.workflow.capture_delay)
+            if capture_wait:
+                self.work_queue.put(("status", f"等待取卡稳定 {capture_wait:g} 秒"))
+                time.sleep(capture_wait)
             self.work_queue.put(("status", "正在截取识别框"))
             img = preprocess_image(capture_region(recog, self.config_data.recognition_margin), self.config_data.preprocess_level)
             quality = image_quality_report(img)
@@ -608,11 +835,12 @@ class AIMarkerApp(tk.Tk):
                     cur = black_pixel_ratio(img)
                     blank, reason = is_blank(cur, ref, self.config_data.blank_threshold)
                     self.work_queue.put(("output", f"空白检测：{reason}\n"))
-                    if blank:
+            if blank:
                         result = {"student_answer": "空白答题卡", "ai_score": 0, "final_score": 0, "comment": "空白答题卡，自动判 0 分", "is_blank_card": True, "max_score": self._max_score()}
                         self.work_queue.put(("result", (result, img, auto_submit)))
-                        if auto_submit and score_box and submit_box and not self.config_data.workflow.confirm_before_submit:
-                            fill_and_submit(score_box, submit_box, 0)
+                        # 连续批改时自动填分和提交
+                        if auto_submit and score_box and submit_box and self.continuous:
+                            fill_and_submit(score_box, submit_box, 0, switch_mode=self.config_data.workflow.score_switch_mode)
                         return
             self.skip_blank_once = False
             self.work_queue.put(("status", "正在调用 AI"))
@@ -620,7 +848,7 @@ class AIMarkerApp(tk.Tk):
             if not self.config_data.workflow.primary_enabled:
                 raise RuntimeError("主评未启用，请在配置页打开主评开关")
             callback = lambda text: self.work_queue.put(("output", text))
-            grade = grade_dual(self.config_data, img, provider, callback) if self.config_data.workflow.dual_enabled else grade_image(self.config_data, img, provider, callback)
+            grade = grade_dual(self.config_data, img, provider, callback) if self.config_data.workflow.dual_enabled else grade_with_optional_ocr(self.config_data, img, provider, callback)
             scored = apply_scoring(grade, self.config_data.scoring)
             result = {
                 "student_answer": grade.student_answer,
@@ -637,8 +865,12 @@ class AIMarkerApp(tk.Tk):
                 "image_base64": image_to_base64(img) if self.config_data.save_images else "",
             }
             self.work_queue.put(("result", (result, img, auto_submit)))
-            if auto_submit and score_box and submit_box and scored["final_score"] is not None and not self.config_data.workflow.confirm_before_submit:
-                fill_and_submit(score_box, submit_box, scored["final_score"])
+            # 连续批改时自动填分和提交
+            if auto_submit and score_box and submit_box and scored["final_score"] is not None and self.continuous:
+                scoring_wait = max(0, self.config_data.workflow.scoring_delay)
+                if scoring_wait:
+                    time.sleep(scoring_wait)
+                fill_and_submit(score_box, submit_box, scored["final_score"], self._score_values_for_fill(result), self.config_data.workflow.score_switch_mode)
         except Exception as exc:
             self.work_queue.put(("error", str(exc)))
 
@@ -667,6 +899,7 @@ class AIMarkerApp(tk.Tk):
         self.after(150, self._poll_queue)
 
     def _show_result(self, result: dict[str, Any], image=None, auto_submit: bool = False) -> None:
+        """展示批改结果，连续批改时不弹窗。"""
         self.current_result = result
         self.current_image = image
         self.answer_view.delete("1.0", "end")
@@ -674,9 +907,8 @@ class AIMarkerApp(tk.Tk):
         self.output.insert("end", f"\n\n最终得分：{result.get('final_score')}\n")
         self._save_history_record(result)
         self.refresh_history()
-        self.set_status("批改完成")
-        if auto_submit and self.config_data.workflow.confirm_before_submit:
-            self._open_submit_dialog(result, image)
+        # 连续批改时自动填分提交后即返回，无需弹窗确认
+        self.set_status("批改完成，已自动提交" if self.continuous else "批改完成")
 
     def _save_history_record(self, result: dict[str, Any], corrected: bool = False) -> None:
         add_history({
@@ -692,93 +924,6 @@ class AIMarkerApp(tk.Tk):
             "dual_eval": result.get("dual_eval"),
             "image_base64": result.get("image_base64", ""),
         })
-
-    def _open_submit_dialog(self, result: dict[str, Any], image=None) -> None:
-        mode = self.config_data.workflow.mode
-        countdown = self.config_data.workflow.unattended_countdown if mode == "unattended" else self.config_data.workflow.normal_countdown
-        SubmitDialog(
-            self,
-            result,
-            image,
-            mode,
-            countdown,
-            on_submit=self.submit_current_score,
-            on_cancel=lambda: self.set_status("已取消提交"),
-            on_correct=self.open_correction,
-            on_mark_blank=self.mark_current_blank,
-            on_not_blank=self.regrade_not_blank,
-        )
-
-    def fill_current_score(self) -> None:
-        if not self.current_result:
-            messagebox.showinfo("没有分数", "请先完成一次批改")
-            return
-        box = self.get_box("score")
-        if not box:
-            messagebox.showerror("缺少打分框", "请先添加打分框")
-            return
-        fill_score(box, self.current_result.get("final_score", 0))
-
-    def submit_current_score(self) -> None:
-        if not self.current_result:
-            messagebox.showinfo("没有分数", "请先完成一次批改")
-            return
-        score_box = self.get_box("score")
-        submit_box = self.get_box("submit")
-        if not score_box or not submit_box:
-            messagebox.showerror("缺少操作框", "请先添加打分框和提交框")
-            return
-        fill_and_submit(score_box, submit_box, self.current_result.get("final_score", 0))
-        self.set_status("已提交当前分数")
-        self._continue_after_submit()
-
-    def _continue_after_submit(self) -> None:
-        if not (self.running and self.continuous and self.config_data.workflow.confirm_before_submit):
-            return
-        self.loop_count += 1
-        target = self.config_data.workflow.target_count if self.config_data.workflow.target_count_enabled else 0
-        self.progress_var.set(f"{self.loop_count}/{target or '不限'}")
-        if target and self.loop_count >= target:
-            self.running = False
-            self.continuous = False
-            self.set_status("已达到目标份数，自动停止")
-            return
-        delay_ms = int(max(0.1, self.config_data.workflow.next_paper_delay) * 1000)
-        self.after(delay_ms, lambda: threading.Thread(target=self._grade_once_worker, kwargs={"auto_submit": True}, daemon=True).start() if self.running and self.continuous else None)
-
-    def mark_current_blank(self) -> None:
-        if not self.current_result:
-            return
-        self.current_result.update({"student_answer": "空白答题卡", "ai_score": 0, "final_score": 0, "comment": "手动标记为空白答题卡", "is_blank_card": True})
-        self.fill_current_score()
-        self.submit_current_score()
-
-    def regrade_not_blank(self) -> None:
-        self.skip_blank_once = True
-        self.start_once()
-
-    def open_correction(self) -> None:
-        if not self.current_result:
-            messagebox.showinfo("没有结果", "请先完成一次批改")
-            return
-        CorrectionDialog(self, self.config_data, self.current_result, self._accept_correction)
-
-    def _accept_correction(self, score: float, info: dict[str, Any]) -> None:
-        if not self.current_result:
-            return
-        self.current_result["final_score"] = score
-        self.current_result["corrected"] = True
-        self.current_result["correction_reason"] = info.get("reason", "")
-        if info.get("new_answer"):
-            self.config_data.answer = info["new_answer"]
-            self.answer.delete("1.0", "end")
-            self.answer.insert("1.0", info["new_answer"])
-        if info.get("new_rubric"):
-            self.config_data.rubric = info["new_rubric"]
-            self.rubric.delete("1.0", "end")
-            self.rubric.insert("1.0", info["new_rubric"])
-        self.save_all()
-        self.set_status("纠错已应用")
 
     def capture_blank_reference(self) -> None:
         box = self.get_box("recognition")
@@ -812,6 +957,7 @@ class AIMarkerApp(tk.Tk):
             (self.primary_provider.get(), self.primary_model.get()),
             (self.secondary_provider.get(), self.secondary_model.get()),
             (self.arbitration_provider.get(), self.arbitration_model.get()),
+            (self.ocr_provider.get(), self.ocr_model.get()),
         ]:
             provider = self.get_provider_by_name(provider_name)
             if provider and model:
@@ -869,6 +1015,7 @@ class AIMarkerApp(tk.Tk):
         if hasattr(self, "provider_model_combo"):
             self.provider_model_combo.configure(values=provider.available_models())
         self.provider_reasoning_var.set(provider.reasoning_effort)
+        self.provider_source_var.set(provider.source)
 
     def add_provider(self) -> None:
         base = "自定义服务商"
@@ -908,6 +1055,10 @@ class AIMarkerApp(tk.Tk):
         if self.config_data.active_provider == removed.name:
             self.config_data.active_provider = self.config_data.providers[0].name
             self.active_provider.set(self.config_data.active_provider)
+        fallback = self.config_data.providers[0].name
+        for var in (self.primary_provider, self.secondary_provider, self.arbitration_provider, self.ocr_provider):
+            if var.get() == removed.name:
+                var.set(fallback)
         self.refresh_provider_tree()
         self.set_status(f"已删除服务商：{removed.name}")
 
@@ -930,6 +1081,7 @@ class AIMarkerApp(tk.Tk):
         provider.endpoint = self.provider_endpoint_var.get().strip()
         provider.api_key = self.provider_key_var.get().strip()
         provider.model = self.provider_model_var.get().strip()
+        provider.source = self.provider_source_var.get().strip() or "network"
         models = [x.strip() for x in self.provider_models_var.get().replace("\n", ",").split(",") if x.strip()]
         if provider.model and provider.model not in models:
             models.insert(0, provider.model)
@@ -944,6 +1096,8 @@ class AIMarkerApp(tk.Tk):
             self.secondary_provider.set(new_name)
         if self.arbitration_provider.get() == old_name:
             self.arbitration_provider.set(new_name)
+        if self.ocr_provider.get() == old_name:
+            self.ocr_provider.set(new_name)
         save_config(self.config_data)
         self.refresh_provider_tree()
         self.set_status(f"服务商已保存：{new_name}")
@@ -969,7 +1123,7 @@ class AIMarkerApp(tk.Tk):
 
         def worker() -> None:
             try:
-                text = test_provider(provider)
+                text = test_provider(provider, self.provider_test_prompt_var.get().strip() or "请只回复：连接成功")
                 self.work_queue.put(("status", f"{provider.name} 连接成功：{text[:40]}"))
             except Exception as exc:
                 self.work_queue.put(("error", f"{provider.name} 测试失败：{exc}"))
@@ -1060,6 +1214,17 @@ class AIMarkerApp(tk.Tk):
         save_presets(presets)
         self.refresh_presets()
         self.set_status(f"已删除方案：{name}")
+
+    def ensure_ten_presets(self) -> None:
+        self.save_all()
+        presets = load_presets()
+        base = self.config_data.to_dict()
+        for index in range(1, 11):
+            name = f"评分标准{index}"
+            presets.setdefault(name, {**base, "active_preset": name})
+        save_presets(presets)
+        self.refresh_presets()
+        self.set_status("已补足10套评分标准方案")
 
     def refresh_history(self) -> None:
         from storage import load_history

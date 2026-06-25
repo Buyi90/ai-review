@@ -46,6 +46,7 @@ class Provider:
     model: str = "aimarker-fast"
     reasoning_effort: str = "minimal"
     models: list[str] = field(default_factory=list)
+    source: str = "network"
 
     def available_models(self) -> list[str]:
         # 每个供应商保存自己的模型列表，当前模型不在列表时也保留，避免用户手动输入后丢失。
@@ -115,6 +116,7 @@ class ScoringSettings:
 @dataclass
 class Workflow:
     mode: str = "normal"
+    recognition_mode: str = "direct"
     primary_enabled: bool = True
     dual_enabled: bool = False
     arbitration_enabled: bool = True
@@ -122,6 +124,8 @@ class Workflow:
     primary_provider_name: str = "5plus1官方"
     secondary_provider_name: str = "5plus1官方"
     arbitration_provider_name: str = "5plus1官方"
+    ocr_provider_name: str = "5plus1官方"
+    ocr_provider: Provider = field(default_factory=lambda: Provider(model="aimarker-fast"))
     secondary_provider: Provider = field(default_factory=lambda: Provider(model="aimarker-fast"))
     arbitration_provider: Provider = field(default_factory=lambda: Provider(model="aimarker-pro", reasoning_effort=""))
     target_count_enabled: bool = False
@@ -130,7 +134,10 @@ class Workflow:
     confirm_before_submit: bool = True
     normal_countdown: int = 5
     unattended_countdown: int = 1
+    capture_delay: float = 0.5
+    scoring_delay: float = 0.0
     next_paper_delay: float = 0.8
+    score_switch_mode: str = "single"
 
 
 @dataclass
@@ -138,6 +145,9 @@ class AppConfig:
     active_preset: str = "默认配置"
     active_provider: str = "5plus1官方"
     providers: list[Provider] = field(default_factory=default_providers)
+    grade_level: str = ""
+    subject: str = ""
+    question_type: str = ""
     question: str = ""
     answer: str = ""
     rubric: str = ""
@@ -178,6 +188,7 @@ def provider_from_dict(data: dict[str, Any]) -> Provider:
         model=data.get("model", ""),
         reasoning_effort=data.get("reasoning_effort", ""),
         models=[str(x).strip() for x in data.get("models", []) if str(x).strip()],
+        source=data.get("source", "network"),
     )
 
 
@@ -196,6 +207,7 @@ def config_from_dict(data: dict[str, Any]) -> AppConfig:
     workflow_raw = data.get("workflow", {})
     workflow = Workflow(
         mode=workflow_raw.get("mode", "normal"),
+        recognition_mode=workflow_raw.get("recognition_mode", workflow_raw.get("recognitionMode", "direct")),
         primary_enabled=bool(workflow_raw.get("primary_enabled", workflow_raw.get("primaryEnabled", True))),
         dual_enabled=bool(workflow_raw.get("dual_enabled", False)),
         arbitration_enabled=bool(workflow_raw.get("arbitration_enabled", workflow_raw.get("arbitrationEnabled", True))),
@@ -203,6 +215,8 @@ def config_from_dict(data: dict[str, Any]) -> AppConfig:
         primary_provider_name=workflow_raw.get("primary_provider_name", workflow_raw.get("primaryProviderName", data.get("active_provider", "5plus1官方"))),
         secondary_provider_name=workflow_raw.get("secondary_provider_name", workflow_raw.get("secondaryProviderName", "")),
         arbitration_provider_name=workflow_raw.get("arbitration_provider_name", workflow_raw.get("arbitrationProviderName", "")),
+        ocr_provider_name=workflow_raw.get("ocr_provider_name", workflow_raw.get("ocrProviderName", "")),
+        ocr_provider=provider_from_dict(workflow_raw.get("ocr_provider", {})),
         secondary_provider=provider_from_dict(workflow_raw.get("secondary_provider", {})),
         arbitration_provider=provider_from_dict(workflow_raw.get("arbitration_provider", {})),
         target_count_enabled=bool(workflow_raw.get("target_count_enabled", False)),
@@ -211,12 +225,18 @@ def config_from_dict(data: dict[str, Any]) -> AppConfig:
         confirm_before_submit=bool(workflow_raw.get("confirm_before_submit", True)),
         normal_countdown=int(workflow_raw.get("normal_countdown", 5) or 5),
         unattended_countdown=int(workflow_raw.get("unattended_countdown", 1) or 1),
+        capture_delay=float(workflow_raw.get("capture_delay", 0.5) or 0),
+        scoring_delay=float(workflow_raw.get("scoring_delay", 0) or 0),
         next_paper_delay=float(workflow_raw.get("next_paper_delay", 0.8) or 0.8),
+        score_switch_mode=workflow_raw.get("score_switch_mode", workflow_raw.get("scoreSwitchMode", "single")),
     )
     cfg = AppConfig(
         active_preset=data.get("active_preset", "默认配置"),
         active_provider=data.get("active_provider", data.get("activeProvider", "5plus1官方")),
         providers=_providers_from_raw(data.get("providers")),
+        grade_level=data.get("grade_level", data.get("gradeLevel", "")),
+        subject=data.get("subject", ""),
+        question_type=data.get("question_type", data.get("questionType", "")),
         question=data.get("question", ""),
         answer=data.get("answer", ""),
         rubric=data.get("rubric", ""),
@@ -239,6 +259,11 @@ def config_from_dict(data: dict[str, Any]) -> AppConfig:
         cfg.workflow.secondary_provider_name = cfg.workflow.secondary_provider.name if cfg.workflow.secondary_provider.name in names else cfg.active_provider
     if not cfg.workflow.arbitration_provider_name or cfg.workflow.arbitration_provider_name not in names:
         cfg.workflow.arbitration_provider_name = cfg.workflow.arbitration_provider.name if cfg.workflow.arbitration_provider.name in names else cfg.active_provider
+    if not cfg.workflow.ocr_provider_name or cfg.workflow.ocr_provider_name not in names:
+        cfg.workflow.ocr_provider_name = cfg.workflow.primary_provider_name
+    cfg.workflow.ocr_provider = next((p for p in cfg.providers if p.name == cfg.workflow.ocr_provider_name), cfg.workflow.ocr_provider)
+    cfg.workflow.secondary_provider = next((p for p in cfg.providers if p.name == cfg.workflow.secondary_provider_name), cfg.workflow.secondary_provider)
+    cfg.workflow.arbitration_provider = next((p for p in cfg.providers if p.name == cfg.workflow.arbitration_provider_name), cfg.workflow.arbitration_provider)
     return cfg
 
 
