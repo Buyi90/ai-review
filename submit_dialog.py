@@ -6,6 +6,8 @@ from typing import Any, Callable
 
 from PIL import Image, ImageTk
 
+import theme
+
 
 # 批改后确认窗口：复刻脚本里的确认提交、暂停、纠错和空白卡复核流程。
 
@@ -53,7 +55,7 @@ class SubmitDialog(tk.Toplevel):
         title = "试改确认" if self.mode == "trial" else "批改完成"
         if self.result.get("is_blank_card"):
             title += " / 空白卡"
-        ttk.Label(header, text=title, font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
+        ttk.Label(header, text=title, font=(theme.FONT_FAMILY, 14, "bold")).pack(side="left")
         self.countdown_var = tk.StringVar(value=self._countdown_text())
         ttk.Label(header, textvariable=self.countdown_var).pack(side="right")
 
@@ -73,7 +75,7 @@ class SubmitDialog(tk.Toplevel):
         score = self.result.get("final_score", "")
         max_score = self.result.get("max_score", "")
         ttk.Label(result_panel, text="最终得分").pack(anchor="w")
-        ttk.Label(result_panel, text=f"{score} / {max_score}" if max_score != "" else str(score), font=("Segoe UI", 30, "bold")).pack(anchor="w", pady=(0, 8))
+        ttk.Label(result_panel, text=f"{score} / {max_score}" if max_score != "" else str(score), font=(theme.FONT_FAMILY, 30, "bold")).pack(anchor="w", pady=(0, 8))
 
         if self.result.get("sub_scores"):
             ttk.Label(result_panel, text="各小题得分").pack(anchor="w")

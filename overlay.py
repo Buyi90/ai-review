@@ -3,6 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from typing import Callable
 
+import theme
 from models import RegionBox
 
 
@@ -29,8 +30,9 @@ class RegionOverlay(tk.Toplevel):
             text="拖动彩色框调整位置；拖动右下角调整大小；Enter 保存；Esc 取消",
             bg="#111827",
             fg="white",
-            padx=12,
-            pady=8,
+            font=(theme.FONT_FAMILY, 11),
+            padx=16,
+            pady=10,
         )
         self.hint.place(x=20, y=20)
         self.canvas.bind("<ButtonPress-1>", self.on_down)
@@ -47,7 +49,7 @@ class RegionOverlay(tk.Toplevel):
                 continue
             x1, y1, x2, y2 = box.rect()
             self.canvas.create_rectangle(x1, y1, x2, y2, outline=box.color, width=4, tags=("box", f"box-{i}"))
-            self.canvas.create_text(x1 + 10, y1 + 10, text=box.name, fill=box.color, anchor="nw", font=("Microsoft YaHei UI", 16, "bold"), tags="box")
+            self.canvas.create_text(x1 + 10, y1 + 10, text=box.name, fill=box.color, anchor="nw", font=(theme.FONT_FAMILY, 16, "bold"), tags="box")
             self.canvas.create_rectangle(x2 - 16, y2 - 16, x2, y2, fill=box.color, outline=box.color, tags="box")
 
     def hit_test(self, x: int, y: int) -> tuple[int | None, str]:

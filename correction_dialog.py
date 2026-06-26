@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Callable
 
+import theme
 from models import AppConfig
 
 
@@ -33,8 +34,8 @@ class CorrectionDialog(tk.Toplevel):
         root.pack(fill="both", expand=True)
 
         # 顶部展示 AI 的当前得分，方便与人工判断对照。
-        ttk.Label(root, text="AI 打分", font=("Microsoft YaHei UI", 12, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(root, text=str(self.result.get("final_score", "")), font=("Segoe UI", 24, "bold")).grid(
+        ttk.Label(root, text="AI 打分", font=(theme.FONT_FAMILY, 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(root, text=str(self.result.get("final_score", "")), font=(theme.FONT_FAMILY, 24, "bold")).grid(
             row=1,
             column=0,
             sticky="w",
