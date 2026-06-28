@@ -31,8 +31,8 @@ class AIMarkerApp(ttk.Window):
     def __init__(self):
         super().__init__(themename=theme.THEME_NAME)
         self.title("AI 自动阅卷桌面端")
-        self.geometry("1180x780")
-        self.minsize(1040, 680)
+        self.geometry("750x680")  # 进一步缩小（相比850再减100px宽）
+        self.minsize(700, 600)    # 最小尺寸
         self.config_data: AppConfig = load_config()
         self.status_var = tk.StringVar(value="就绪")
         self.progress_var = tk.StringVar(value="0/0")
@@ -52,18 +52,119 @@ class AIMarkerApp(ttk.Window):
         self._apply_native_widget_theme()
         self.after(150, self._poll_queue)
 
+    def _create_section_title(self, parent, text: str, color: str = "#3498DB") -> ttk.Frame:
+        """创建带左侧竖线的分组标题（参考小作拓风格）"""
+        container = ttk.Frame(parent)
+
+        # 左侧竖线
+        line = tk.Frame(container, bg=color, width=3, height=18)
+        line.pack(side="left", fill="y", padx=(0, 6))
+
+        # 标题文字
+        label = ttk.Label(container, text=text, font=(theme.FONT_FAMILY, 11, "bold"))
+        label.pack(side="left")
+
+        return container
+
+    def _compact_form_row(self, parent, row: int, label_text: str, widget_var, widget_type: str = "entry", **kwargs) -> int:
+        """创建紧凑的表单行：标签在左，控件在右"""
+        ttk.Label(parent, text=label_text, font=(theme.FONT_FAMILY, 10)).grid(
+            row=row, column=0, sticky="w", pady=2, padx=(0, 4)
+        )
+
+        if widget_type == "entry":
+            widget = ttk.Entry(parent, textvariable=widget_var, width=kwargs.get('width', 8))
+        elif widget_type == "combobox":
+            widget = ttk.Combobox(parent, textvariable=widget_var,
+                                 values=kwargs.get('values', []),
+                                 state="readonly", width=kwargs.get('width', 7))
+        elif widget_type == "checkbutton":
+            widget = ttk.Checkbutton(parent, text="", variable=widget_var)
+        else:
+            widget = ttk.Entry(parent, textvariable=widget_var, width=kwargs.get('width', 8))
+
+        widget.grid(row=row, column=1, sticky="w", pady=2)
+        return row + 1
+
+    def _create_scrollable_tab(self, title: str) -> tuple[ttk.Frame, ttk.Frame]:
+        """创建带滚动条的标签页，返回(tab外框, 可滚动内容框)"""
+        tab = ttk.Frame(self.tabs)
+        self.tabs.add(tab, text=title)
+
+        # 创建Canvas和滚动条
+        canvas = tk.Canvas(tab, highlightthickness=0, bg="#F8F9FA")
+        scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # 绑定鼠标滚轮
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind("<MouseWheel>", on_mousewheel)
+        scrollable_frame.bind("<MouseWheel>", on_mousewheel)
+
+        return tab, scrollable_frame
+
     def _build_style(self) -> None:
         style = self.style
         colors = style.colors
+
+        # 全局样式
         style.configure(".", font=theme.FONT_BASE)
+
+        # 标题样式
         style.configure("Title.TLabel", font=theme.FONT_TITLE)
         style.configure("Subtitle.TLabel", font=theme.FONT_SUBTITLE, foreground=colors.secondary)
         style.configure("Status.TLabel", font=theme.FONT_SMALL)
-        style.configure("Card.TLabelframe", padding=12)
-        style.configure("Card.TLabelframe.Label", font=(theme.FONT_FAMILY, 10, "bold"))
-        style.configure("TNotebook.Tab", padding=(18, 9), font=theme.FONT_BASE)
-        style.configure("TButton", padding=(10, 6))
-        style.configure("Primary.TButton", padding=(14, 9), font=(theme.FONT_FAMILY, 10, "bold"))
+
+        # 卡片样式 - 更现代的设计
+        style.configure("Card.TLabelframe",
+                       padding=theme.SPACING["lg"],
+                       relief="flat",
+                       borderwidth=0)
+        style.configure("Card.TLabelframe.Label",
+                       font=(theme.FONT_FAMILY, 11, "bold"),
+                       foreground=theme.COLORS["primary"])
+
+        # 主要卡片样式（识别答案、评分）
+        style.configure("Primary.Card.TLabelframe",
+                       padding=theme.SPACING["xl"],
+                       relief="solid",
+                       borderwidth=2)
+        style.configure("Primary.Card.TLabelframe.Label",
+                       font=(theme.FONT_FAMILY, 12, "bold"),
+                       foreground=theme.COLORS["info"])
+
+        # 标签页样式
+        style.configure("TNotebook.Tab",
+                       padding=(20, 10),
+                       font=theme.FONT_BASE)
+
+        # 按钮样式
+        style.configure("TButton",
+                       padding=(12, 8),
+                       font=theme.FONT_BASE)
+        style.configure("Primary.TButton",
+                       padding=(16, 10),
+                       font=(theme.FONT_FAMILY, 11, "bold"))
+        style.configure("Icon.TButton",
+                       padding=(14, 9),
+                       font=(theme.FONT_FAMILY, 10))
+
+        # 分数标签样式
+        style.configure("Score.TLabel",
+                       font=theme.FONT_SCORE,
+                       foreground=theme.COLORS["success"])
 
     def _register_text(self, widget: tk.Text, *, mono: bool = False) -> tk.Text:
         widget._mono = mono  # type: ignore[attr-defined]
@@ -83,55 +184,116 @@ class AIMarkerApp(ttk.Window):
             theme.style_listbox(widget, colors)
 
     def _build(self) -> None:
-        outer = ttk.Frame(self, padding=16)
+        outer = ttk.Frame(self, padding=theme.SPACING["lg"])
         outer.pack(fill="both", expand=True)
+
+        # 顶部标题栏 - 现代化设计
         header = ttk.Frame(outer)
-        header.pack(fill="x", pady=(0, 14))
+        header.pack(fill="x", pady=(0, theme.SPACING["xl"]))
+
         title_box = ttk.Frame(header)
         title_box.pack(side="left")
-        ttk.Label(title_box, text="AI 自动阅卷桌面端", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(title_box, text="截图识别 · 多模型评分 · 自动回填", style="Subtitle.TLabel").pack(anchor="w")
+
+        # 主标题
+        title_label = ttk.Label(title_box, text="AI 自动阅卷系统", style="Title.TLabel")
+        title_label.pack(anchor="w")
+
+        # 副标题 - 更有设计感
+        subtitle_frame = ttk.Frame(title_box)
+        subtitle_frame.pack(anchor="w", pady=(theme.SPACING["xs"], 0))
+
+        badges = [
+            ("📸", "截图识别"),
+            ("🤖", "多模型评分"),
+            ("⚡", "自动回填")
+        ]
+
+        for icon, text in badges:
+            badge = ttk.Frame(subtitle_frame)
+            badge.pack(side="left", padx=(0, theme.SPACING["sm"]))
+            ttk.Label(badge, text=f"{icon} {text}", font=(theme.FONT_FAMILY, 9), foreground=theme.COLORS["muted"]).pack()
+
+        # 状态指示器 - 右上角
         status_box = ttk.Frame(header)
-        status_box.pack(side="right", anchor="e")
-        ttk.Label(status_box, text="状态", style="Subtitle.TLabel").pack(side="left", padx=(0, 8))
-        ttk.Label(status_box, textvariable=self.status_var, style="Status.TLabel", bootstyle=INFO).pack(side="left")
+        status_box.pack(side="right", anchor="ne")
+
+        status_container = ttk.Frame(status_box)
+        status_container.pack()
+
+        ttk.Label(status_container, text="● 状态", font=(theme.FONT_FAMILY, 10), foreground=theme.COLORS["muted"]).pack(side="left", padx=(0, theme.SPACING["sm"]))
+        self.status_label_widget = ttk.Label(status_container, textvariable=self.status_var, font=(theme.FONT_FAMILY, 11, "bold"), bootstyle=SUCCESS)
+        self.status_label_widget.pack(side="left")
 
         self.tabs = ttk.Notebook(outer)
         self.tabs.pack(fill="both", expand=True)
         self._build_work_tab()
+        self._build_answer_config_tab()  # 新增：答案配置标签页
         self._build_config_tab()
         self._build_provider_tab()
         self._build_box_tab()
         self._build_history_tab()
         self._build_preset_tab()
 
+        # 底部状态栏 - 现代化设计
         footer = ttk.Frame(outer)
-        footer.pack(fill="x", pady=(14, 0))
-        ttk.Label(footer, text="批阅进度").pack(side="left")
-        ttk.Label(footer, textvariable=self.progress_var, bootstyle=PRIMARY).pack(side="left", padx=8)
-        ttk.Button(footer, text="保存配置", bootstyle=(SUCCESS, OUTLINE), command=self.save_all).pack(side="right")
+        footer.pack(fill="x", pady=(theme.SPACING["lg"], 0))
+
+        # 左侧进度信息
+        progress_frame = ttk.Frame(footer)
+        progress_frame.pack(side="left")
+
+        ttk.Label(progress_frame, text="📊", font=(theme.FONT_FAMILY, 12)).pack(side="left", padx=(0, theme.SPACING["xs"]))
+        ttk.Label(progress_frame, text="批阅进度", font=(theme.FONT_FAMILY, 10)).pack(side="left", padx=(0, theme.SPACING["sm"]))
+        ttk.Label(progress_frame, textvariable=self.progress_var, font=(theme.FONT_FAMILY, 11, "bold"), bootstyle=PRIMARY).pack(side="left")
+
+        # 中间主题选择
+        theme_frame = ttk.Frame(footer)
+        theme_frame.pack(side="left", padx=(20, 0))
+        ttk.Label(theme_frame, text="🎨", font=(theme.FONT_FAMILY, 12)).pack(side="left", padx=(0, theme.SPACING["xs"]))
+        ttk.Label(theme_frame, text="主题", font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=(0, theme.SPACING["xs"]))
+
+        # 获取当前主题的中文名
+        current_theme_display = theme.AVAILABLE_THEMES.get(theme.THEME_NAME, "清新蓝")
+        self.theme_var = tk.StringVar(value=current_theme_display)
+
+        # 显示中文名称列表
+        theme_names = list(theme.AVAILABLE_THEMES.values())
+        theme_combo = ttk.Combobox(theme_frame, textvariable=self.theme_var,
+                                   values=theme_names, state="readonly", width=10)
+        theme_combo.pack(side="left")
+        theme_combo.bind("<<ComboboxSelected>>", self.change_theme)
+
+        # 右侧操作按钮
+        ttk.Button(footer, text="💾 保存配置", bootstyle=(SUCCESS, OUTLINE), command=self.save_all).pack(side="right")
 
     def _build_work_tab(self) -> None:
-        tab = ttk.Frame(self.tabs, padding=12)
+        tab = ttk.Frame(self.tabs, padding=theme.SPACING["sm"])
         self.tabs.add(tab, text="批改")
 
-        # 顶部工具栏
+        # 顶部工具栏 - 超紧凑化
         toolbar = ttk.Frame(tab)
-        toolbar.pack(fill="x", pady=(0, 12))
-        ttk.Button(toolbar, text="开始批改", style="Primary.TButton", bootstyle=SUCCESS, command=self.start_grading).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="调试批改", bootstyle=INFO, command=self.debug_once).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="停止批改", bootstyle=DANGER, command=self.stop).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="检查配置", bootstyle=(SECONDARY, OUTLINE), command=self.check_readiness).pack(side="left", padx=4)
-        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(toolbar, text="仅识别框截图", bootstyle=(INFO, OUTLINE), command=self.preview_capture).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="采集空白卡范本", bootstyle=(SECONDARY, OUTLINE), command=self.capture_blank_reference).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="清除空白卡范本", bootstyle=(SECONDARY, OUTLINE), command=lambda: (clear_blank_reference(), self.set_status("空白卡范本已清除"))).pack(side="left", padx=4)
+        toolbar.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+
+        # 左侧主要操作
+        left_toolbar = ttk.Frame(toolbar)
+        left_toolbar.pack(side="left")
+        ttk.Button(left_toolbar, text="🚀 开始批改", style="Primary.TButton", bootstyle=SUCCESS, command=self.start_grading).pack(side="left", padx=1)
+        ttk.Button(left_toolbar, text="🔧 调试", bootstyle=INFO, command=self.debug_once).pack(side="left", padx=1)
+        ttk.Button(left_toolbar, text="⏹ 停止", bootstyle=DANGER, command=self.stop).pack(side="left", padx=theme.SPACING["xs"])
+
+        # 右侧辅助操作
+        right_toolbar = ttk.Frame(toolbar)
+        right_toolbar.pack(side="right")
+        ttk.Button(right_toolbar, text="✓ 检查配置", bootstyle=(SECONDARY, OUTLINE), command=self.check_readiness).pack(side="left", padx=theme.SPACING["xs"])
+        ttk.Button(right_toolbar, text="📷 截图预览", bootstyle=(INFO, OUTLINE), command=self.preview_capture).pack(side="left", padx=theme.SPACING["xs"])
+        ttk.Button(right_toolbar, text="⚙ 采集范本", bootstyle=(SECONDARY, OUTLINE), command=self.capture_blank_reference).pack(side="left", padx=theme.SPACING["xs"])
 
         # 主滚动区域 - 使用Canvas实现
         canvas_frame = ttk.Frame(tab)
         canvas_frame.pack(fill="both", expand=True)
 
-        self.work_canvas = tk.Canvas(canvas_frame, highlightthickness=0)
+        # 添加背景色
+        self.work_canvas = tk.Canvas(canvas_frame, highlightthickness=0, bg="#F8F9FA")
         scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.work_canvas.yview)
 
         self.scroll_content = ttk.Frame(self.work_canvas)
@@ -143,76 +305,115 @@ class AIMarkerApp(ttk.Window):
         self.work_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # 鼠标滚轮绑定
+        # 鼠标滚轮绑定 - 只绑定到canvas，不使用bind_all
         def on_mousewheel(event):
             self.work_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self.work_canvas.bind_all("<MouseWheel>", on_mousewheel)
+        self.work_canvas.bind("<MouseWheel>", on_mousewheel)
+        self.scroll_content.bind("<MouseWheel>", on_mousewheel)
 
-        # 内容区域 - 卡片式布局
+        # 内容区域 - 超紧凑卡片布局
         content = self.scroll_content
 
         # 1. 识别答案卡片（最重要）
-        answer_card = ttk.Labelframe(content, text="📝 学生答案（识别结果）", style="Card.TLabelframe", padding=16)
-        answer_card.pack(fill="both", pady=(0, 12))
-        self.answer_view = self._register_text(tk.Text(answer_card, wrap="word", height=8, font=(theme.FONT_FAMILY, 12)))
+        answer_card = ttk.Labelframe(content, text="  📝 学生答案", style="Primary.Card.TLabelframe", padding=theme.SPACING["sm"])
+        answer_card.pack(fill="both", pady=(1, theme.SPACING["sm"]), padx=theme.SPACING["xs"])
+
+        self.answer_view = self._register_text(tk.Text(answer_card, wrap="word", height=5, font=(theme.FONT_FAMILY, 11, "bold")))
         self.answer_view.pack(fill="both", expand=True)
+        self.answer_view.tag_config("highlight", foreground=theme.COLORS["dark"], font=(theme.FONT_FAMILY, 11, "bold"))
 
         # 2. 参考答案对比卡片
-        reference_card = ttk.Labelframe(content, text="📚 参考答案（对比）", style="Card.TLabelframe", padding=16)
-        reference_card.pack(fill="both", pady=(0, 12))
-        self.reference_view = self._register_text(tk.Text(reference_card, wrap="word", height=6, font=(theme.FONT_FAMILY, 11)))
+        reference_card = ttk.Labelframe(content, text="  📚 参考答案", style="Card.TLabelframe", padding=theme.SPACING["sm"])
+        reference_card.pack(fill="both", pady=(0, theme.SPACING["sm"]), padx=theme.SPACING["xs"])
+        self.reference_view = self._register_text(tk.Text(reference_card, wrap="word", height=3, font=(theme.FONT_FAMILY, 10)))
         self.reference_view.pack(fill="both", expand=True)
+        self.reference_view.tag_config("ref", foreground=theme.COLORS["muted"])
         self.reference_view.configure(state="disabled")  # 只读
 
         # 3. 评分结果卡片（醒目显示）
-        score_card = ttk.Labelframe(content, text="📊 评分结果", style="Card.TLabelframe", padding=16)
-        score_card.pack(fill="x", pady=(0, 12))
+        score_card = ttk.Labelframe(content, text="  📊 评分", style="Primary.Card.TLabelframe", padding=theme.SPACING["sm"])
+        score_card.pack(fill="x", pady=(0, theme.SPACING["sm"]), padx=theme.SPACING["xs"])
 
         score_display = ttk.Frame(score_card)
         score_display.pack(fill="x")
 
-        # 最终得分 - 大号显示
+        # 最终得分 - 超大号显示
         final_frame = ttk.Frame(score_display)
-        final_frame.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Label(final_frame, text="最终得分", font=(theme.FONT_FAMILY, 10)).pack(anchor="w")
-        self.final_score_label = ttk.Label(final_frame, text="--", font=(theme.FONT_FAMILY, 28, "bold"), bootstyle=SUCCESS)
-        self.final_score_label.pack(anchor="w")
+        final_frame.pack(side="left", fill="x", expand=True, padx=theme.SPACING["lg"])
 
-        # 详细分数信息
+        ttk.Label(final_frame, text="最终得分", font=(theme.FONT_FAMILY, 11, "bold"), foreground=theme.COLORS["muted"]).pack(anchor="w")
+
+        score_container = ttk.Frame(final_frame)
+        score_container.pack(fill="x", pady=(theme.SPACING["xs"], 0))
+
+        self.final_score_label = ttk.Label(score_container, text="--", font=theme.FONT_SCORE, bootstyle=SUCCESS)
+        self.final_score_label.pack(side="left", anchor="w")
+
+        self.score_unit_label = ttk.Label(score_container, text="分", font=(theme.FONT_FAMILY, 18, "bold"), foreground=theme.COLORS["muted"])
+        self.score_unit_label.pack(side="left", anchor="s", padx=(theme.SPACING["xs"], 0), pady=(0, 6))
+
+        # 分隔线
+        ttk.Separator(score_display, orient="vertical").pack(side="left", fill="y", padx=theme.SPACING["lg"])
+
+        # 详细分数信息 - 卡片式展示
         detail_frame = ttk.Frame(score_display)
-        detail_frame.pack(side="left", fill="x", expand=True, padx=8)
-        self.score_detail_label = ttk.Label(detail_frame, text="AI原始分: --\n满分: --\n勤勉加分: --", font=(theme.FONT_FAMILY, 10), justify="left")
-        self.score_detail_label.pack(anchor="w")
+        detail_frame.pack(side="left", fill="both", expand=True, padx=theme.SPACING["lg"])
 
-        # 4. 评分说明（可折叠）
-        comment_card = ttk.Labelframe(content, text="💬 评分说明", style="Card.TLabelframe", padding=16)
-        comment_card.pack(fill="x", pady=(0, 12))
+        # 使用网格布局展示详细信息
+        detail_grid = ttk.Frame(detail_frame)
+        detail_grid.pack(fill="both", expand=True)
 
-        self.comment_toggle_btn = ttk.Button(comment_card, text="▼ 展开", bootstyle=(SECONDARY, OUTLINE), command=self.toggle_comment)
-        self.comment_toggle_btn.pack(fill="x", pady=(0, 8))
+        # AI原始分
+        ai_score_frame = ttk.Frame(detail_grid)
+        ai_score_frame.grid(row=0, column=0, sticky="w", pady=theme.SPACING["xs"])
+        ttk.Label(ai_score_frame, text="AI原始分", font=(theme.FONT_FAMILY, 9), foreground=theme.COLORS["muted"]).pack(side="left")
+        self.ai_score_value = ttk.Label(ai_score_frame, text="--", font=(theme.FONT_FAMILY, 12, "bold"), foreground=theme.COLORS["info"])
+        self.ai_score_value.pack(side="left", padx=(theme.SPACING["sm"], 0))
 
-        self.comment_view = self._register_text(tk.Text(comment_card, wrap="word", height=5, font=(theme.FONT_FAMILY, 10)))
+        # 满分
+        max_score_frame = ttk.Frame(detail_grid)
+        max_score_frame.grid(row=1, column=0, sticky="w", pady=theme.SPACING["xs"])
+        ttk.Label(max_score_frame, text="满分", font=(theme.FONT_FAMILY, 9), foreground=theme.COLORS["muted"]).pack(side="left")
+        self.max_score_value = ttk.Label(max_score_frame, text="--", font=(theme.FONT_FAMILY, 12, "bold"), foreground=theme.COLORS["dark"])
+        self.max_score_value.pack(side="left", padx=(theme.SPACING["sm"], 0))
+
+        # 勤勉加分
+        bonus_frame = ttk.Frame(detail_grid)
+        bonus_frame.grid(row=2, column=0, sticky="w", pady=theme.SPACING["xs"])
+        ttk.Label(bonus_frame, text="勤勉加分", font=(theme.FONT_FAMILY, 9), foreground=theme.COLORS["muted"]).pack(side="left")
+        self.bonus_value = ttk.Label(bonus_frame, text="--", font=(theme.FONT_FAMILY, 12, "bold"), foreground=theme.COLORS["warning"])
+        self.bonus_value.pack(side="left", padx=(theme.SPACING["sm"], 0))
+
+        # 4. 评分说明（可折叠，超紧凑）
+        comment_card = ttk.Labelframe(content, text="  💬 评分说明", style="Card.TLabelframe", padding=theme.SPACING["sm"])
+        comment_card.pack(fill="x", pady=(0, theme.SPACING["sm"]), padx=theme.SPACING["xs"])
+
+        self.comment_toggle_btn = ttk.Button(comment_card, text="▼ 展开", bootstyle=(INFO, OUTLINE), command=self.toggle_comment)
+        self.comment_toggle_btn.pack(fill="x")
+
+        self.comment_view = self._register_text(tk.Text(comment_card, wrap="word", height=4, font=(theme.FONT_FAMILY, 9)))
         self.comment_view.pack(fill="both")
         self.comment_view.pack_forget()  # 默认隐藏
+        self.comment_view.tag_config("comment", foreground=theme.COLORS["dark"], spacing1=2, spacing3=2)
+        self.comment_view.tag_config("basis", foreground=theme.COLORS["muted"], font=(theme.FONT_FAMILY, 9))
         self.comment_expanded = False
 
-        # 5. AI详细输出（折叠，不重要）
-        output_card = ttk.Labelframe(content, text="🔍 AI 详细输出（技术信息）", style="Card.TLabelframe", padding=16)
-        output_card.pack(fill="x", pady=(0, 12))
+        # 5. AI详细输出（折叠，超紧凑）
+        output_card = ttk.Labelframe(content, text="  🔍 AI输出", style="Card.TLabelframe", padding=theme.SPACING["sm"])
+        output_card.pack(fill="x", pady=(0, theme.SPACING["sm"]), padx=theme.SPACING["xs"])
 
         self.output_toggle_btn = ttk.Button(output_card, text="▼ 展开", bootstyle=(SECONDARY, OUTLINE), command=self.toggle_output)
-        self.output_toggle_btn.pack(fill="x", pady=(0, 8))
+        self.output_toggle_btn.pack(fill="x")
 
-        self.output = self._register_text(tk.Text(output_card, wrap="word", height=8, font=(theme.FONT_FAMILY, 9)), mono=True)
+        self.output = self._register_text(tk.Text(output_card, wrap="word", height=5, font=(theme.FONT_FAMILY, 8)), mono=True)
         self.output.pack(fill="both")
         self.output.pack_forget()  # 默认隐藏
         self.output_expanded = False
-        self.output.tag_config("muted", foreground="#667085")
+        self.output.tag_config("muted", foreground=theme.COLORS["muted"])
 
     def _build_config_tab(self) -> None:
-        tab = ttk.Frame(self.tabs, padding=12)
-        self.tabs.add(tab, text="配置")
-        form = ttk.Frame(tab)
+        _, tab = self._create_scrollable_tab("配置")
+        form = ttk.Frame(tab, padding=12)
         form.pack(fill="both", expand=True)
 
         self.active_provider = tk.StringVar(value=self.config_data.active_provider)
@@ -291,71 +492,177 @@ class AIMarkerApp(ttk.Window):
         row += 1
         row = self._entry(form, row, "批改份数(0=不限)", self.target_count)
 
-        text_area = ttk.Frame(form)
-        text_area.grid(row=0, column=2, rowspan=12, sticky="nsew", padx=(20, 0))
-        meta = ttk.Frame(text_area)
-        meta.pack(fill="x", pady=(0, 8))
-        for label, var in [("年级", self.grade_level), ("学科", self.subject), ("题型", self.question_type)]:
-            block = ttk.Frame(meta)
-            block.pack(side="left", fill="x", expand=True, padx=(0, 6))
-            ttk.Label(block, text=label).pack(anchor="w")
-            ttk.Entry(block, textvariable=var).pack(fill="x")
-        self.question = self._labeled_text(text_area, "题目内容", self.config_data.question, 6)
-        self.answer = self._labeled_text(text_area, "参考答案", self.config_data.answer, 6)
-        self.rubric = self._labeled_text(text_area, "评分标准", self.config_data.rubric, 8)
-        material_panel = ttk.Labelframe(text_area, text="评分材料图片", style="Card.TLabelframe")
-        material_panel.pack(fill="x", pady=(0, 10))
-        material_bar = ttk.Frame(material_panel)
-        material_bar.pack(fill="x", padx=8, pady=6)
-        ttk.Button(material_bar, text="添加图片", bootstyle=(INFO, OUTLINE), command=self.add_material_images).pack(side="left", padx=3)
-        ttk.Button(material_bar, text="删除选中", bootstyle=(DANGER, OUTLINE), command=self.remove_material_image).pack(side="left", padx=3)
-        ttk.Button(material_bar, text="打开图片", bootstyle=(SECONDARY, OUTLINE), command=self.open_material_image).pack(side="left", padx=3)
-        self.material_list = self._register_listbox(tk.Listbox(material_panel, height=4))
-        self.material_list.pack(fill="x", padx=8, pady=(0, 8))
+        form.columnconfigure(1, weight=1)
+
+    def _build_answer_config_tab(self) -> None:
+        """答案配置标签页 - 紧凑化设计"""
+        _, tab = self._create_scrollable_tab("答案配置")
+        container = ttk.Frame(tab, padding=theme.SPACING["md"])
+        container.pack(fill="both", expand=True)
+
+        # 初始化变量（如果还没初始化）
+        if not hasattr(self, 'grade_level'):
+            self.grade_level = tk.StringVar(value=self.config_data.grade_level)
+            self.subject = tk.StringVar(value=self.config_data.subject)
+            self.question_type = tk.StringVar(value=self.config_data.question_type)
+
+        # ┃ 基本信息
+        section = self._create_section_title(container, "基本信息", "#9B59B6")
+        section.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+
+        meta_grid = ttk.Frame(container)
+        meta_grid.pack(fill="x", pady=(0, theme.SPACING["md"]))
+
+        ttk.Label(meta_grid, text="年级", font=(theme.FONT_FAMILY, 9)).grid(row=0, column=0, sticky="w", padx=(0, 2))
+        ttk.Entry(meta_grid, textvariable=self.grade_level, width=4).grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Label(meta_grid, text="学科", font=(theme.FONT_FAMILY, 9)).grid(row=0, column=2, sticky="w", padx=(0, 2))
+        ttk.Entry(meta_grid, textvariable=self.subject, width=4).grid(row=0, column=3, sticky="ew", padx=(0, 6))
+        ttk.Label(meta_grid, text="题型", font=(theme.FONT_FAMILY, 9)).grid(row=0, column=4, sticky="w", padx=(0, 2))
+        ttk.Entry(meta_grid, textvariable=self.question_type, width=4).grid(row=0, column=5, sticky="ew")
+
+        meta_grid.columnconfigure(1, weight=1)
+        meta_grid.columnconfigure(3, weight=1)
+        meta_grid.columnconfigure(5, weight=1)
+
+        # ┃ 参考答案
+        section = self._create_section_title(container, "参考答案", "#3498DB")
+        section.pack(fill="x", pady=(theme.SPACING["md"], theme.SPACING["sm"]))
+        self.answer = self._labeled_text(container, "", self.config_data.answer, 6)
+
+        # ┃ 评分标准
+        section = self._create_section_title(container, "评分标准", "#3498DB")
+        section.pack(fill="x", pady=(theme.SPACING["md"], theme.SPACING["sm"]))
+        self.rubric = self._labeled_text(container, "", self.config_data.rubric, 6)
+
+        # ┃ 评分材料图片
+        section = self._create_section_title(container, "评分材料", "#27AE60")
+        section.pack(fill="x", pady=(theme.SPACING["md"], theme.SPACING["sm"]))
+
+        material_card = ttk.Frame(container)
+        material_card.pack(fill="x", pady=(0, theme.SPACING["md"]))
+
+        material_bar = ttk.Frame(material_card)
+        material_bar.pack(fill="x", pady=(0, theme.SPACING["xs"]))
+        ttk.Button(material_bar, text="📁 添加", bootstyle=SUCCESS, command=self.add_material_images).pack(side="left", padx=2)
+        ttk.Button(material_bar, text="🗑 删除", bootstyle=DANGER, command=self.remove_material_image).pack(side="left", padx=2)
+        ttk.Button(material_bar, text="👁 查看", bootstyle=INFO, command=self.open_material_image).pack(side="left", padx=2)
+
+        self.material_list = self._register_listbox(tk.Listbox(material_card, height=4))
+        self.material_list.pack(fill="x")
         self.refresh_material_images()
 
-        # 分小题评分来自脚本的 scoring.units，桌面端用表格维护。
-        unit_panel = ttk.Labelframe(form, text="分小题评分", style="Card.TLabelframe")
-        unit_panel.grid(row=row + 1, column=0, columnspan=3, sticky="nsew", pady=(16, 0))
-        unit_bar = ttk.Frame(unit_panel)
-        unit_bar.pack(fill="x", padx=8, pady=8)
-        ttk.Button(unit_bar, text="添加小题", bootstyle=(INFO, OUTLINE), command=self.add_unit).pack(side="left", padx=4)
-        ttk.Button(unit_bar, text="删除选中", bootstyle=(DANGER, OUTLINE), command=self.remove_unit).pack(side="left", padx=4)
-        ttk.Button(unit_bar, text="应用小题表", bootstyle=(SUCCESS, OUTLINE), command=self.apply_units_from_table).pack(side="left", padx=4)
-        self.unit_tree = ttk.Treeview(unit_panel, columns=("label", "max", "step"), show="headings", height=5)
-        for col, title, width in [("label", "小题", 180), ("max", "满分", 100), ("step", "取整步长", 100)]:
-            self.unit_tree.heading(col, text=title)
-            self.unit_tree.column(col, width=width)
-        self.unit_tree.pack(fill="x", padx=8, pady=(0, 8))
-        self.unit_tree.bind("<Double-1>", self.edit_unit_cell)
-        self.refresh_units()
+    def _build_config_tab(self) -> None:
+        """配置标签页 - 只保留技术配置"""
+        _, tab = self._create_scrollable_tab("配置")
+        form = ttk.Frame(tab, padding=12)
+        form.pack(fill="both", expand=True)
+
+        self.active_provider = tk.StringVar(value=self.config_data.active_provider)
+        self.primary_enabled = tk.BooleanVar(value=self.config_data.workflow.primary_enabled)
+        self.secondary_enabled = tk.BooleanVar(value=self.config_data.workflow.dual_enabled)
+        self.arbitration_enabled = tk.BooleanVar(value=self.config_data.workflow.arbitration_enabled)
+        self.primary_provider = tk.StringVar(value=self.config_data.workflow.primary_provider_name)
+        self.secondary_provider = tk.StringVar(value=self.config_data.workflow.secondary_provider_name)
+        self.arbitration_provider = tk.StringVar(value=self.config_data.workflow.arbitration_provider_name)
+        self.ocr_provider = tk.StringVar(value=self.config_data.workflow.ocr_provider_name)
+        self.primary_model = tk.StringVar(value=(self.get_provider_by_name(self.primary_provider.get()) or self.get_active_provider()).model)
+        self.secondary_model = tk.StringVar(value=(self.get_provider_by_name(self.secondary_provider.get()) or self.get_active_provider()).model)
+        self.arbitration_model = tk.StringVar(value=(self.get_provider_by_name(self.arbitration_provider.get()) or self.get_active_provider()).model)
+        self.ocr_model = tk.StringVar(value=(self.get_provider_by_name(self.ocr_provider.get()) or self.get_active_provider()).model)
+        self.recognition_mode = tk.StringVar(value=self.config_data.workflow.recognition_mode)
+        self.mode = tk.StringVar(value=self.config_data.workflow.mode)
+        self.max_score = tk.StringVar(value=str(self.config_data.scoring.max_score))
+        self.round_step = tk.StringVar(value=str(self.config_data.scoring.round_step))
+        self.round_method = tk.StringVar(value=self.config_data.scoring.round_method)
+        self.diligence_enabled = tk.BooleanVar(value=self.config_data.scoring.diligence_enabled)
+        self.diligence_bonus = tk.StringVar(value=str(self.config_data.scoring.diligence_max_bonus))
+        self.save_images = tk.BooleanVar(value=self.config_data.save_images)
+        self.preprocess = tk.IntVar(value=self.config_data.preprocess_level)
+        self.recognition_margin = tk.StringVar(value=str(self.config_data.recognition_margin))
+        self.blank_enabled = tk.BooleanVar(value=self.config_data.blank_detection_enabled)
+        self.capture_delay = tk.StringVar(value=str(self.config_data.workflow.capture_delay))
+        self.scoring_delay = tk.StringVar(value=str(self.config_data.workflow.scoring_delay))
+        self.next_paper_delay = tk.StringVar(value=str(self.config_data.workflow.next_paper_delay))
+        self.score_switch_mode = tk.StringVar(value=self.config_data.workflow.score_switch_mode)
+        self.target_count = tk.StringVar(value=str(self.config_data.workflow.target_count))
+
+        row = 0
+        ttk.Checkbutton(form, text="启用主评", variable=self.primary_enabled).grid(row=row, column=1, sticky="w", pady=6)
+        row += 1
+        row = self._provider_model_row(form, row, "主评", self.primary_provider, self.primary_model)
+        ttk.Checkbutton(form, text="启用副评", variable=self.secondary_enabled).grid(row=row, column=1, sticky="w", pady=6)
+        row += 1
+        row = self._provider_model_row(form, row, "副评", self.secondary_provider, self.secondary_model)
+        ttk.Checkbutton(form, text="启用仲裁", variable=self.arbitration_enabled).grid(row=row, column=1, sticky="w", pady=6)
+        row += 1
+        row = self._provider_model_row(form, row, "仲裁", self.arbitration_provider, self.arbitration_model)
+        ttk.Label(form, text="识别方式").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Combobox(form, textvariable=self.recognition_mode, values=["direct", "ocr_first"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
+        row = self._provider_model_row(form, row, "独立OCR", self.ocr_provider, self.ocr_model)
+        self.dual_threshold = tk.StringVar(value=str(self.config_data.workflow.dual_threshold))
+        row = self._entry(form, row, "仲裁阈值", self.dual_threshold)
+        ttk.Label(form, text="批改模式").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Combobox(form, textvariable=self.mode, values=["normal", "trial", "unattended"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
+        row = self._entry(form, row, "满分", self.max_score)
+        row = self._entry(form, row, "取整步长", self.round_step)
+        ttk.Label(form, text="取整方式").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Combobox(form, textvariable=self.round_method, values=["round", "floor", "ceil"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
+        ttk.Checkbutton(form, text="启用勤勉加分", variable=self.diligence_enabled).grid(row=row, column=1, sticky="w", pady=6)
+        row += 1
+        row = self._entry(form, row, "勤勉最高加分", self.diligence_bonus)
+        ttk.Checkbutton(form, text="保存答题卡截图到历史", variable=self.save_images).grid(row=row, column=1, sticky="w", pady=6)
+        row += 1
+        ttk.Label(form, text="OCR 预处理").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Scale(form, from_=0, to=3, variable=self.preprocess, orient="horizontal").grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
+        row = self._entry(form, row, "识别框内边距(px)", self.recognition_margin)
+        ttk.Checkbutton(form, text="启用空白答题卡检测", variable=self.blank_enabled).grid(row=row, column=1, sticky="w", pady=6)
+        row += 1
+        row = self._entry(form, row, "取卡延时(秒)", self.capture_delay)
+        row = self._entry(form, row, "打分延时(秒)", self.scoring_delay)
+        row = self._entry(form, row, "批改间隔延时(秒)", self.next_paper_delay)
+        ttk.Label(form, text="多打分框切换").grid(row=row, column=0, sticky="w", pady=6)
+        ttk.Combobox(form, textvariable=self.score_switch_mode, values=["single", "tab", "enter", "space"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
+        row += 1
+        row = self._entry(form, row, "批改份数(0=不限)", self.target_count)
 
         form.columnconfigure(1, weight=1)
-        form.columnconfigure(2, weight=2)
-        form.rowconfigure(11, weight=1)
 
     def _build_provider_tab(self) -> None:
-        tab = ttk.Frame(self.tabs, padding=12)
-        self.tabs.add(tab, text="服务商")
-        left = ttk.Frame(tab)
-        left.pack(side="left", fill="y", padx=(0, 12))
-        right = ttk.Frame(tab)
-        right.pack(side="left", fill="both", expand=True)
+        _, tab = self._create_scrollable_tab("服务商")
+        container = ttk.Frame(tab, padding=theme.SPACING["sm"])
+        container.pack(fill="both", expand=True)
 
-        ttk.Label(left, text="AI 服务商").pack(anchor="w")
-        self.provider_tree = ttk.Treeview(left, columns=("name", "model"), show="headings", height=18)
-        self.provider_tree.heading("name", text="名称")
-        self.provider_tree.heading("model", text="模型")
-        self.provider_tree.column("name", width=140)
-        self.provider_tree.column("model", width=180)
-        self.provider_tree.pack(fill="y", expand=True, pady=(4, 8))
-        self.provider_tree.bind("<<TreeviewSelect>>", self.on_provider_select)
-        ttk.Button(left, text="新增服务商", bootstyle=(INFO, OUTLINE), command=self.add_provider).pack(fill="x", pady=3)
-        ttk.Button(left, text="复制选中", bootstyle=(SECONDARY, OUTLINE), command=self.copy_provider).pack(fill="x", pady=3)
-        ttk.Button(left, text="删除选中", bootstyle=(DANGER, OUTLINE), command=self.delete_provider).pack(fill="x", pady=3)
-        ttk.Button(left, text="保存服务商", bootstyle=SUCCESS, command=self.save_provider_from_form).pack(fill="x", pady=(12, 3))
-        ttk.Button(left, text="设为主评", bootstyle=PRIMARY, command=self.set_selected_as_primary).pack(fill="x", pady=3)
-        ttk.Button(left, text="测试连接", bootstyle=(INFO, OUTLINE), command=self.test_selected_provider).pack(fill="x", pady=3)
+        # ┃ 选择服务商（下拉选择）
+        section = self._create_section_title(container, "选择服务商", "#3498DB")
+        section.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+
+        select_frame = ttk.Frame(container)
+        select_frame.pack(fill="x", pady=(0, theme.SPACING["md"]))
+
+        # 服务商下拉选择框
+        self.provider_selector_var = tk.StringVar()
+        ttk.Label(select_frame, text="当前服务商", font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=(0, 4))
+        self.provider_selector = ttk.Combobox(select_frame, textvariable=self.provider_selector_var,
+                                              state="readonly", width=20)
+        self.provider_selector.pack(side="left", fill="x", expand=True)
+        self.provider_selector.bind("<<ComboboxSelected>>", self.on_provider_selector_changed)
+
+        # 操作按钮（紧凑）
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(fill="x", pady=(0, theme.SPACING["md"]))
+        ttk.Button(btn_frame, text="➕ 新增", bootstyle=SUCCESS, command=self.add_provider).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="📋 复制", bootstyle=INFO, command=self.copy_provider).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="🗑 删除", bootstyle=DANGER, command=self.delete_provider).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="💾 保存", bootstyle=PRIMARY, command=self.save_provider_from_form).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="🧪 测试", bootstyle=SECONDARY, command=self.test_selected_provider).pack(side="left", padx=1)
+
+        # ┃ 服务商配置（表单）
+        section = self._create_section_title(container, "服务商配置", "#9B59B6")
+        section.pack(fill="x", pady=(theme.SPACING["md"], theme.SPACING["sm"]))
 
         self.provider_name_var = tk.StringVar()
         self.provider_endpoint_var = tk.StringVar()
@@ -366,85 +673,126 @@ class AIMarkerApp(ttk.Window):
         self.provider_source_var = tk.StringVar(value="network")
         self.provider_test_prompt_var = tk.StringVar(value="请只回复：连接成功")
 
+        form = ttk.Frame(container)
+        form.pack(fill="both", expand=True)
+
         row = 0
-        row = self._entry(right, row, "名称", self.provider_name_var)
-        ttk.Label(right, text="模型来源").grid(row=row, column=0, sticky="w", pady=6)
-        ttk.Combobox(right, textvariable=self.provider_source_var, values=["network", "local", "lan", "custom"], state="readonly").grid(row=row, column=1, sticky="ew", pady=6)
+        row = self._entry(form, row, "名称", self.provider_name_var)
+        ttk.Label(form, text="模型来源", font=(theme.FONT_FAMILY, 9)).grid(row=row, column=0, sticky="w", pady=2)
+        ttk.Combobox(form, textvariable=self.provider_source_var, values=["network", "local", "lan", "custom"],
+                     state="readonly", width=12).grid(row=row, column=1, sticky="w", pady=2)
         row += 1
-        row = self._entry(right, row, "API 端点", self.provider_endpoint_var)
-        row = self._entry(right, row, "API Key", self.provider_key_var, show="*")
-        ttk.Label(right, text="当前模型").grid(row=row, column=0, sticky="w", pady=6)
-        self.provider_model_combo = ttk.Combobox(right, textvariable=self.provider_model_var)
-        self.provider_model_combo.grid(row=row, column=1, sticky="ew", pady=6)
+        row = self._entry(form, row, "API端点", self.provider_endpoint_var)
+        row = self._entry(form, row, "API Key", self.provider_key_var, show="*")
+        ttk.Label(form, text="当前模型", font=(theme.FONT_FAMILY, 9)).grid(row=row, column=0, sticky="w", pady=2)
+        self.provider_model_combo = ttk.Combobox(form, textvariable=self.provider_model_var, width=12)
+        self.provider_model_combo.grid(row=row, column=1, sticky="w", pady=2)
         row += 1
-        row = self._entry(right, row, "模型列表(逗号分隔)", self.provider_models_var)
-        row = self._entry(right, row, "推理强度", self.provider_reasoning_var)
-        row = self._entry(right, row, "测试对话", self.provider_test_prompt_var)
-        ttk.Label(right, text="内置示例支持 5plus1 官方、火山方舟和 OpenAI 兼容接口；自定义服务商只要兼容 /chat/completions 即可。").grid(row=row, column=0, columnspan=2, sticky="w", pady=(16, 6))
-        right.columnconfigure(1, weight=1)
-        self.refresh_provider_tree()
+        row = self._entry(form, row, "模型列表", self.provider_models_var)
+        row = self._entry(form, row, "推理强度", self.provider_reasoning_var)
+        row = self._entry(form, row, "测试对话", self.provider_test_prompt_var)
+
+        form.columnconfigure(1, weight=1)
+        self.refresh_provider_selector()
 
     def _build_box_tab(self) -> None:
-        tab = ttk.Frame(self.tabs, padding=12)
-        self.tabs.add(tab, text="操作框")
-        toolbar = ttk.Frame(tab)
-        toolbar.pack(fill="x", pady=(0, 10))
-        ttk.Button(toolbar, text="+识别框", bootstyle=SUCCESS, command=lambda: self.add_box("recognition")).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="+打分框", bootstyle=PRIMARY, command=lambda: self.add_box("score")).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="+提交框", bootstyle=WARNING, command=lambda: self.add_box("submit")).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="打开拖拽调整", bootstyle=(INFO, OUTLINE), command=self.open_overlay).pack(side="left", padx=12)
+        _, tab = self._create_scrollable_tab("操作框")
+        container = ttk.Frame(tab, padding=theme.SPACING["sm"])
+        container.pack(fill="both", expand=True)
+
+        # ┃ 操作框管理
+        section = self._create_section_title(container, "操作框管理", "#3498DB")
+        section.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+
+        toolbar = ttk.Frame(container)
+        toolbar.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+        ttk.Button(toolbar, text="📝 识别框", bootstyle=SUCCESS, command=lambda: self.add_box("recognition")).pack(side="left", padx=1)
+        ttk.Button(toolbar, text="📊 打分框", bootstyle=PRIMARY, command=lambda: self.add_box("score")).pack(side="left", padx=1)
+        ttk.Button(toolbar, text="📤 提交框", bootstyle=WARNING, command=lambda: self.add_box("submit")).pack(side="left", padx=1)
+        ttk.Button(toolbar, text="🎯 拖拽调整", bootstyle=INFO, command=self.open_overlay).pack(side="left", padx=(8, 0))
 
         columns = ("name", "kind", "x", "y", "w", "h")
-        self.box_tree = ttk.Treeview(tab, columns=columns, show="headings", height=12)
+        self.box_tree = ttk.Treeview(container, columns=columns, show="headings", height=8)
         for c, title in zip(columns, ["名称", "类型", "X", "Y", "宽", "高"]):
             self.box_tree.heading(c, text=title)
-            self.box_tree.column(c, width=100)
+            self.box_tree.column(c, width=80)
         self.box_tree.pack(fill="both", expand=True)
         self.refresh_boxes()
 
     def _build_history_tab(self) -> None:
-        tab = ttk.Frame(self.tabs, padding=12)
-        self.tabs.add(tab, text="历史")
-        bar = ttk.Frame(tab)
-        bar.pack(fill="x", pady=(0, 10))
-        ttk.Button(bar, text="刷新", bootstyle=(INFO, OUTLINE), command=self.refresh_history).pack(side="left", padx=4)
-        ttk.Button(bar, text="导出 JSON", bootstyle=(SECONDARY, OUTLINE), command=lambda: self._export(export_json)).pack(side="left", padx=4)
-        ttk.Button(bar, text="导出 CSV", bootstyle=(SECONDARY, OUTLINE), command=lambda: self._export(export_csv)).pack(side="left", padx=4)
-        ttk.Button(bar, text="导出 HTML", bootstyle=(SECONDARY, OUTLINE), command=lambda: self._export(export_html)).pack(side="left", padx=4)
-        ttk.Button(bar, text="导出 Word", bootstyle=(SECONDARY, OUTLINE), command=lambda: self._export(export_docx)).pack(side="left", padx=4)
-        ttk.Button(bar, text="导出 Excel", bootstyle=(SECONDARY, OUTLINE), command=lambda: self._export(export_xlsx)).pack(side="left", padx=4)
-        ttk.Button(bar, text="导出 PDF", bootstyle=(SECONDARY, OUTLINE), command=lambda: self._export(export_pdf)).pack(side="left", padx=4)
-        ttk.Button(bar, text="清空历史", bootstyle=(DANGER, OUTLINE), command=self.clear_history_records).pack(side="left", padx=4)
-        self.history_text = self._register_text(tk.Text(tab, wrap="word"), mono=True)
+        _, tab = self._create_scrollable_tab("历史")
+        container = ttk.Frame(tab, padding=theme.SPACING["sm"])
+        container.pack(fill="both", expand=True)
+
+        # ┃ 历史记录
+        section = self._create_section_title(container, "历史记录", "#3498DB")
+        section.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+
+        bar = ttk.Frame(container)
+        bar.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+
+        ttk.Button(bar, text="🔄 刷新", bootstyle=INFO, command=self.refresh_history).pack(side="left", padx=1)
+
+        # 导出格式下拉选择
+        ttk.Label(bar, text="导出格式", font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=(8, 4))
+        self.export_format_var = tk.StringVar(value="JSON")
+        export_combo = ttk.Combobox(bar, textvariable=self.export_format_var,
+                                    values=["JSON", "CSV", "HTML", "Word", "Excel", "PDF"],
+                                    state="readonly", width=8)
+        export_combo.pack(side="left", padx=1)
+
+        ttk.Button(bar, text="📦 导出", bootstyle=SUCCESS, command=self.export_history_selected_format).pack(side="left", padx=(4, 8))
+        ttk.Button(bar, text="🗑 清空", bootstyle=DANGER, command=self.clear_history_records).pack(side="left", padx=1)
+
+        self.history_text = self._register_text(tk.Text(container, wrap="word"), mono=True)
         self.history_text.pack(fill="both", expand=True)
         self.refresh_history()
 
     def _build_preset_tab(self) -> None:
-        tab = ttk.Frame(self.tabs, padding=12)
-        self.tabs.add(tab, text="方案")
-        left = ttk.Frame(tab)
-        left.pack(side="left", fill="y", padx=(0, 12))
-        right = ttk.Frame(tab)
-        right.pack(side="left", fill="both", expand=True)
+        _, tab = self._create_scrollable_tab("方案")
+        container = ttk.Frame(tab, padding=theme.SPACING["sm"])
+        container.pack(fill="both", expand=True)
 
-        ttk.Label(left, text="配置方案").pack(anchor="w")
-        self.preset_list = self._register_listbox(tk.Listbox(left, height=18, width=28))
-        self.preset_list.pack(fill="y", expand=True, pady=(4, 8))
-        self.preset_list.bind("<<ListboxSelect>>", self._on_preset_select)
-        ttk.Button(left, text="载入选中方案", bootstyle=PRIMARY, command=self.load_selected_preset).pack(fill="x", pady=3)
-        ttk.Button(left, text="保存为当前方案", bootstyle=SUCCESS, command=self.save_current_preset).pack(fill="x", pady=3)
-        ttk.Button(left, text="另存为新方案", bootstyle=(SUCCESS, OUTLINE), command=self.save_as_preset).pack(fill="x", pady=3)
-        ttk.Button(left, text="删除选中方案", bootstyle=(DANGER, OUTLINE), command=self.delete_selected_preset).pack(fill="x", pady=3)
-        ttk.Button(left, text="补足10套标准", bootstyle=(INFO, OUTLINE), command=self.ensure_ten_presets).pack(fill="x", pady=3)
-        ttk.Button(left, text="导出全部配置", bootstyle=(SECONDARY, OUTLINE), command=self.export_settings).pack(fill="x", pady=(12, 3))
-        ttk.Button(left, text="导入配置", bootstyle=(SECONDARY, OUTLINE), command=self.import_settings).pack(fill="x", pady=3)
+        # ┃ 选择方案（下拉选择）
+        section = self._create_section_title(container, "选择方案", "#3498DB")
+        section.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+
+        select_frame = ttk.Frame(container)
+        select_frame.pack(fill="x", pady=(0, theme.SPACING["md"]))
+
+        # 方案下拉选择框
+        self.preset_selector_var = tk.StringVar()
+        ttk.Label(select_frame, text="当前方案", font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=(0, 4))
+        self.preset_selector = ttk.Combobox(select_frame, textvariable=self.preset_selector_var,
+                                            state="readonly", width=20)
+        self.preset_selector.pack(side="left", fill="x", expand=True)
+        self.preset_selector.bind("<<ComboboxSelected>>", self.on_preset_selector_changed)
+
+        # 操作按钮（紧凑）
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(fill="x", pady=(0, theme.SPACING["md"]))
+        ttk.Button(btn_frame, text="📂 载入", bootstyle=PRIMARY, command=self.load_selected_preset).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="💾 保存", bootstyle=SUCCESS, command=self.save_current_preset).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="➕ 另存", bootstyle=INFO, command=self.save_as_preset).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="🗑 删除", bootstyle=DANGER, command=self.delete_selected_preset).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="📦 导出", bootstyle=SECONDARY, command=self.export_settings).pack(side="left", padx=1)
+        ttk.Button(btn_frame, text="📥 导入", bootstyle=SECONDARY, command=self.import_settings).pack(side="left", padx=1)
+
+        # ┃ 方案信息
+        section = self._create_section_title(container, "方案信息", "#9B59B6")
+        section.pack(fill="x", pady=(theme.SPACING["md"], theme.SPACING["sm"]))
 
         self.preset_name_var = tk.StringVar(value=self.config_data.active_preset)
-        ttk.Label(right, text="方案名称").pack(anchor="w")
-        ttk.Entry(right, textvariable=self.preset_name_var).pack(fill="x", pady=(4, 12))
-        ttk.Label(right, text="方案说明").pack(anchor="w")
-        self.preset_info = self._register_text(tk.Text(right, height=14, wrap="word"))
-        self.preset_info.pack(fill="both", expand=True, pady=(4, 0))
+
+        name_frame = ttk.Frame(container)
+        name_frame.pack(fill="x", pady=(0, theme.SPACING["sm"]))
+        ttk.Label(name_frame, text="方案名称", font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=(0, 4))
+        ttk.Entry(name_frame, textvariable=self.preset_name_var, width=20).pack(side="left", fill="x", expand=True)
+
+        ttk.Label(container, text="方案说明", font=(theme.FONT_FAMILY, 9)).pack(anchor="w", pady=(theme.SPACING["sm"], theme.SPACING["xs"]))
+        self.preset_info = self._register_text(tk.Text(container, height=8, wrap="word"))
+        self.preset_info.pack(fill="both", expand=True)
+
         self.refresh_presets()
 
     def _entry(self, parent, row: int, label: str, var: tk.Variable, show: str | None = None) -> int:
@@ -469,14 +817,51 @@ class AIMarkerApp(ttk.Window):
 
     def _labeled_text(self, parent, label: str, value: str, height: int) -> tk.Text:
         ttk.Label(parent, text=label).pack(anchor="w")
-        text = self._register_text(tk.Text(parent, height=height, wrap="word"))
-        text.pack(fill="both", expand=True, pady=(4, 10))
+
+        # 创建带滚动条的容器
+        text_frame = ttk.Frame(parent)
+        text_frame.pack(fill="both", expand=True, pady=(4, 10))
+
+        # 创建滚动条
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        # 创建Text控件并连接滚动条
+        text = self._register_text(tk.Text(text_frame, height=height, wrap="word", yscrollcommand=scrollbar.set))
+        text.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=text.yview)
+
         text.insert("1.0", value)
         return text
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
         self.update_idletasks()
+
+    def change_theme(self, _event=None) -> None:
+        """切换主题 - 实时生效"""
+        selected_display_name = self.theme_var.get()
+
+        # 从中文名称找到英文主题名
+        selected_theme = None
+        for theme_key, theme_name in theme.AVAILABLE_THEMES.items():
+            if theme_name == selected_display_name:
+                selected_theme = theme_key
+                break
+
+        if not selected_theme:
+            self.set_status("未知主题")
+            return
+
+        try:
+            # 直接更改当前窗口的主题
+            self.style.theme_use(selected_theme)
+            theme.THEME_NAME = selected_theme
+            self.set_status(f"主题已切换为 {selected_display_name}")
+        except Exception as e:
+            self.set_status(f"主题切换失败：{str(e)}")
+            from tkinter import messagebox
+            messagebox.showerror("错误", f"无法切换到该主题：{str(e)}")
 
     def save_all(self) -> None:
         self._apply_role_models_to_providers()
@@ -506,7 +891,7 @@ class AIMarkerApp(ttk.Window):
         self.config_data.scoring.round_method = self.round_method.get()
         self.config_data.scoring.diligence_enabled = self.diligence_enabled.get()
         self.config_data.scoring.diligence_max_bonus = float(self.diligence_bonus.get() or 0)
-        self.apply_units_from_table(show_status=False)
+        # 删除分小题评分功能
         self.config_data.preprocess_level = int(self.preprocess.get())
         self.config_data.recognition_margin = int(float(self.recognition_margin.get() or 0))
         self.config_data.blank_detection_enabled = self.blank_enabled.get()
@@ -514,7 +899,7 @@ class AIMarkerApp(ttk.Window):
         self.config_data.grade_level = self.grade_level.get().strip()
         self.config_data.subject = self.subject.get().strip()
         self.config_data.question_type = self.question_type.get().strip()
-        self.config_data.question = self.question.get("1.0", "end").strip()
+        # 题目内容已删除，不再保存
         self.config_data.answer = self.answer.get("1.0", "end").strip()
         self.config_data.rubric = self.rubric.get("1.0", "end").strip()
         save_config(self.config_data)
@@ -560,13 +945,12 @@ class AIMarkerApp(ttk.Window):
         self.next_paper_delay.set(str(self.config_data.workflow.next_paper_delay))
         self.score_switch_mode.set(self.config_data.workflow.score_switch_mode)
         self.target_count.set(str(self.config_data.workflow.target_count))
-        self.question.delete("1.0", "end")
-        self.question.insert("1.0", self.config_data.question)
+        # 题目内容已删除
         self.answer.delete("1.0", "end")
         self.answer.insert("1.0", self.config_data.answer)
         self.rubric.delete("1.0", "end")
         self.rubric.insert("1.0", self.config_data.rubric)
-        self.refresh_units()
+        # 删除分小题评分功能
         self.refresh_boxes()
         self.refresh_provider_tree()
         self.refresh_provider_combos()
@@ -607,63 +991,6 @@ class AIMarkerApp(ttk.Window):
             return
         path = self.config_data.material_images[selected[0]]
         os.startfile(path)
-
-    def refresh_units(self) -> None:
-        if not hasattr(self, "unit_tree"):
-            return
-        self.unit_tree.delete(*self.unit_tree.get_children())
-        for i, unit in enumerate(self.config_data.scoring.units):
-            self.unit_tree.insert("", "end", iid=str(i), values=(unit.label, unit.max_score, unit.round_step))
-
-    def add_unit(self) -> None:
-        from models import ScoringUnit
-        self.config_data.scoring.units.append(ScoringUnit(label=f"第{len(self.config_data.scoring.units) + 1}题", max_score=0, round_step=1))
-        self.refresh_units()
-
-    def remove_unit(self) -> None:
-        selected = self.unit_tree.selection()
-        if not selected:
-            return
-        indexes = sorted((int(x) for x in selected), reverse=True)
-        for i in indexes:
-            if 0 <= i < len(self.config_data.scoring.units):
-                self.config_data.scoring.units.pop(i)
-        self.refresh_units()
-
-    def edit_unit_cell(self, event) -> None:
-        item_id = self.unit_tree.identify_row(event.y)
-        column = self.unit_tree.identify_column(event.x)
-        if not item_id or column not in ("#1", "#2", "#3"):
-            return
-        col_index = int(column[1:]) - 1
-        x, y, w, h = self.unit_tree.bbox(item_id, column)
-        values = list(self.unit_tree.item(item_id, "values"))
-        editor = ttk.Entry(self.unit_tree)
-        editor.insert(0, values[col_index])
-        editor.place(x=x, y=y, width=w, height=h)
-        editor.focus_set()
-
-        def commit(_event=None) -> None:
-            values[col_index] = editor.get()
-            self.unit_tree.item(item_id, values=values)
-            editor.destroy()
-
-        editor.bind("<Return>", commit)
-        editor.bind("<FocusOut>", commit)
-
-    def apply_units_from_table(self, show_status: bool = True) -> None:
-        from models import ScoringUnit
-        units = []
-        for item in self.unit_tree.get_children() if hasattr(self, "unit_tree") else []:
-            label, max_score, step = self.unit_tree.item(item, "values")
-            if str(label).strip():
-                units.append(ScoringUnit(str(label).strip(), float(max_score or 0), float(step or 1)))
-        self.config_data.scoring.units = units
-        if units:
-            self.config_data.scoring.max_score = sum(u.max_score for u in units)
-            self.max_score.set(str(self.config_data.scoring.max_score))
-        if show_status:
-            self.set_status("小题表已应用")
 
     def get_box(self, kind: str) -> RegionBox | None:
         return next((b for b in self.config_data.boxes if b.kind == kind and b.enabled), None)
@@ -922,11 +1249,14 @@ class AIMarkerApp(ttk.Window):
     def _loop_worker(self) -> None:
         target = self.config_data.workflow.target_count if self.config_data.workflow.target_count_enabled else 0
         count = 0
+        last_refresh = 0  # 上次刷新历史的时间
         while self.running:
             if target and count >= target:
                 self.work_queue.put(("status", "已达到目标份数，自动停止"))
                 self.running = False
                 self.continuous = False
+                # 批改完成后刷新一次历史
+                self.refresh_history()
                 break
             self._grade_once_worker(auto_submit=True)
             if not self.running:
@@ -934,6 +1264,12 @@ class AIMarkerApp(ttk.Window):
             count += 1
             self.loop_count = count
             self.work_queue.put(("progress", f"{count}/{target or '不限'}"))
+
+            # 每50份刷新一次历史记录
+            if count - last_refresh >= 50:
+                self.refresh_history()
+                last_refresh = count
+
             time.sleep(max(0.1, self.config_data.workflow.next_paper_delay))
 
     def _grade_once_worker(self, auto_submit: bool = False) -> None:
@@ -1020,8 +1356,9 @@ class AIMarkerApp(ttk.Window):
                 elif kind == "progress":
                     self.progress_var.set(payload)
                 elif kind == "output":
-                    # 追加到AI输出，不清空
-                    self.output.insert("end", payload)
+                    # 连续批改时跳过AI输出更新，减少UI刷新
+                    if not self.continuous:
+                        self.output.insert("end", payload)
                 elif kind == "result":
                     if isinstance(payload, tuple):
                         result, image, auto_submit = payload
@@ -1036,21 +1373,44 @@ class AIMarkerApp(ttk.Window):
         self.after(150, self._poll_queue)
 
     def _show_result(self, result: dict[str, Any], image=None, auto_submit: bool = False) -> None:
-        """展示批改结果，连续批改时不弹窗。"""
+        """展示批改结果，连续批改时最小化UI更新。"""
         self.current_result = result
         self.current_image = image
 
+        # 连续批改时只更新关键信息，减少UI刷新
+        if self.continuous:
+            # 只更新分数显示
+            final_score = result.get("final_score")
+            if final_score is not None:
+                score_text = f"{final_score:.1f}" if isinstance(final_score, (int, float)) else str(final_score)
+                self.final_score_label.configure(text=score_text)
+
+                max_score = result.get("max_score", self._max_score())
+                if max_score > 0:
+                    score_rate = final_score / max_score
+                    if score_rate >= 0.9:
+                        self.final_score_label.configure(bootstyle=SUCCESS, foreground=theme.COLORS["success"])
+                    elif score_rate >= 0.6:
+                        self.final_score_label.configure(bootstyle=WARNING, foreground=theme.COLORS["warning"])
+                    else:
+                        self.final_score_label.configure(bootstyle=DANGER, foreground=theme.COLORS["danger"])
+
+            # 保存历史记录
+            self._save_history_record(result)
+            return
+
+        # 单次调试批改时才完整更新UI
         # 1. 更新识别答案区域（最重要）
         self.answer_view.delete("1.0", "end")
         student_answer = result.get("student_answer", "")
         self.answer_view.insert("1.0", student_answer)
         self.answer_view.tag_add("highlight", "1.0", "end")
-        self.answer_view.tag_config("highlight", font=(theme.FONT_FAMILY, 12, "bold"))
 
         # 2. 更新参考答案对比区域
         self.reference_view.configure(state="normal")
         self.reference_view.delete("1.0", "end")
         self.reference_view.insert("1.0", self.config_data.answer or "（未设置参考答案）")
+        self.reference_view.tag_add("ref", "1.0", "end")
         self.reference_view.configure(state="disabled")
 
         # 3. 更新评分结果（醒目显示）
@@ -1064,49 +1424,63 @@ class AIMarkerApp(ttk.Window):
             score_text = f"{final_score:.1f}" if isinstance(final_score, (int, float)) else str(final_score)
             self.final_score_label.configure(text=score_text)
 
-            # 根据得分率改变颜色
+            # 根据得分率改变颜色 - 使用主题色
             if max_score > 0:
                 score_rate = final_score / max_score
                 if score_rate >= 0.9:
-                    self.final_score_label.configure(bootstyle=SUCCESS)
+                    self.final_score_label.configure(bootstyle=SUCCESS, foreground=theme.COLORS["success"])
                 elif score_rate >= 0.6:
-                    self.final_score_label.configure(bootstyle=WARNING)
+                    self.final_score_label.configure(bootstyle=WARNING, foreground=theme.COLORS["warning"])
                 else:
-                    self.final_score_label.configure(bootstyle=DANGER)
+                    self.final_score_label.configure(bootstyle=DANGER, foreground=theme.COLORS["danger"])
         else:
             self.final_score_label.configure(text="--", bootstyle=SECONDARY)
 
-        # 详细分数信息
-        detail_text = f"AI原始分: {ai_score if ai_score is not None else '--'}\n满分: {max_score}\n勤勉加分: {bonus if bonus else 0}"
-        self.score_detail_label.configure(text=detail_text)
+        # 更新详细分数信息 - 使用独立标签
+        self.ai_score_value.configure(text=f"{ai_score:.1f}" if ai_score is not None else "--")
+        self.max_score_value.configure(text=f"{max_score:.1f}" if max_score else "--")
+        self.bonus_value.configure(text=f"+{bonus:.1f}" if bonus else "0")
 
         # 4. 更新评分说明
         self.comment_view.delete("1.0", "end")
         comment = result.get("comment", "")
         basis = result.get("basis", "")
+
         if comment:
-            self.comment_view.insert("end", f"{comment}\n")
+            self.comment_view.insert("end", comment + "\n")
+            self.comment_view.tag_add("comment", "1.0", "end")
+
         if basis:
-            self.comment_view.insert("end", f"\n评分依据:\n{basis}")
+            self.comment_view.insert("end", f"\n{'='*40}\n评分依据:\n{basis}")
+            basis_start = self.comment_view.index("end-1c linestart-3l")
+            self.comment_view.tag_add("basis", basis_start, "end")
 
         # 5. 更新AI详细输出
-        output_text = self.output.get("1.0", "end-1c")
+        self.output.delete("1.0", "end")
         self.output.insert("end", f"\n\n{'='*50}\n")
-        self.output.insert("end", f"最终得分: {final_score}\n")
+        self.output.insert("end", f"✓ 批改完成时间: {time.strftime('%H:%M:%S')}\n")
+        self.output.insert("end", f"✓ 最终得分: {final_score}\n")
+
         if result.get("sub_scores"):
-            self.output.insert("end", "小题得分: " + ", ".join([f"{s.get('label', '')}:{s.get('score', 0)}" for s in result.get("sub_scores", [])]) + "\n")
+            sub_scores_text = ", ".join([f"{s.get('label', '')}:{s.get('score', 0):.1f}" for s in result.get("sub_scores", [])])
+            self.output.insert("end", f"✓ 小题得分: {sub_scores_text}\n")
+
         if result.get("dual_eval"):
             dual = result.get("dual_eval")
-            self.output.insert("end", f"双评信息: 主评{dual.get('primary_score')} 副评{dual.get('secondary_score')} 差值{dual.get('diff')}\n")
+            self.output.insert("end", f"✓ 双评信息: 主评{dual.get('primary_score')} | 副评{dual.get('secondary_score')} | 差值{dual.get('diff')}\n")
+
+        if result.get("quality"):
+            quality = result.get("quality")
+            self.output.insert("end", f"✓ 图像质量: {quality.get('level')} ({quality.get('width')}×{quality.get('height')})\n")
 
         self._save_history_record(result)
-        self.refresh_history()
 
-        # 滚动到顶部查看识别结果
+        # 只在单次调试时刷新历史和滚动
+        self.refresh_history()
         self.work_canvas.yview_moveto(0)
 
         # 连续批改时自动填分提交后即返回，无需弹窗确认
-        self.set_status("批改完成，已自动提交" if self.continuous else "批改完成")
+        self.set_status("✓ 批改完成，已自动提交" if self.continuous else "✓ 批改完成")
 
     def _score_values_for_fill(self, result: dict[str, Any]) -> list[float | int | str]:
         if self.config_data.workflow.score_switch_mode == "single":
@@ -1189,7 +1563,56 @@ class AIMarkerApp(ttk.Window):
             if model_var.get() not in models and models:
                 model_var.set(models[0])
 
+    def refresh_provider_selector(self) -> None:
+        """刷新服务商下拉选择器"""
+        if not hasattr(self, "provider_selector"):
+            return
+
+        # 获取所有服务商名称
+        provider_names = [p.name for p in self.config_data.providers]
+        self.provider_selector.configure(values=provider_names)
+
+        # 设置当前选中的服务商
+        if provider_names:
+            current = self.config_data.active_provider
+            if current in provider_names:
+                self.provider_selector_var.set(current)
+            else:
+                self.provider_selector_var.set(provider_names[0])
+                # 加载第一个服务商的配置
+                self._load_provider_by_name(provider_names[0])
+
+        self.refresh_provider_combos()
+
+    def _load_provider_by_name(self, name: str) -> None:
+        """根据名称加载服务商配置到表单"""
+        provider = next((p for p in self.config_data.providers if p.name == name), None)
+        if not provider:
+            return
+
+        self.provider_name_var.set(provider.name)
+        self.provider_endpoint_var.set(provider.endpoint)
+        self.provider_key_var.set(provider.api_key)
+        self.provider_model_var.set(provider.model)
+        self.provider_models_var.set(", ".join(provider.available_models()))
+        if hasattr(self, "provider_model_combo"):
+            self.provider_model_combo.configure(values=provider.available_models())
+        self.provider_reasoning_var.set(provider.reasoning_effort)
+        self.provider_source_var.set(provider.source)
+
+    def on_provider_selector_changed(self, _event=None) -> None:
+        """下拉选择器改变时"""
+        selected_name = self.provider_selector_var.get()
+        if selected_name:
+            self._load_provider_by_name(selected_name)
+
     def refresh_provider_tree(self) -> None:
+        # 新版：使用下拉选择器
+        if hasattr(self, "provider_selector"):
+            self.refresh_provider_selector()
+            return
+
+        # 旧版：兼容Treeview（如果还存在）
         if not hasattr(self, "provider_tree"):
             return
         self.provider_tree.delete(*self.provider_tree.get_children())
@@ -1199,6 +1622,17 @@ class AIMarkerApp(ttk.Window):
         self.refresh_provider_combos()
 
     def _selected_provider_index(self) -> int | None:
+        # 新版：从下拉选择器获取
+        if hasattr(self, "provider_selector"):
+            selected_name = self.provider_selector_var.get()
+            if not selected_name:
+                return None
+            for index, provider in enumerate(self.config_data.providers):
+                if provider.name == selected_name:
+                    return index
+            return None
+
+        # 旧版：从Treeview获取
         if not hasattr(self, "provider_tree"):
             return None
         selected = self.provider_tree.selection()
@@ -1334,7 +1768,49 @@ class AIMarkerApp(ttk.Window):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def refresh_preset_selector(self) -> None:
+        """刷新方案下拉选择器"""
+        if not hasattr(self, "preset_selector"):
+            return
+
+        # 获取所有方案名称
+        presets = load_presets()
+        preset_names = list(presets.keys())
+        self.preset_selector.configure(values=preset_names)
+
+        # 设置当前选中的方案
+        if preset_names:
+            current = self.config_data.active_preset
+            if current in preset_names:
+                self.preset_selector_var.set(current)
+            else:
+                self.preset_selector_var.set(preset_names[0])
+                self._load_preset_info_by_name(preset_names[0])
+
+        # 更新方案信息
+        self._update_preset_info()
+
+    def _load_preset_info_by_name(self, name: str) -> None:
+        """根据名称加载方案信息到界面"""
+        if not name:
+            return
+
+        self.preset_name_var.set(name)
+        self._update_preset_info()
+
+    def on_preset_selector_changed(self, _event=None) -> None:
+        """下拉选择器改变时"""
+        selected_name = self.preset_selector_var.get()
+        if selected_name:
+            self._load_preset_info_by_name(selected_name)
+
     def refresh_presets(self) -> None:
+        # 新版：使用下拉选择器
+        if hasattr(self, "preset_selector"):
+            self.refresh_preset_selector()
+            return
+
+        # 旧版：兼容Listbox
         if not hasattr(self, "preset_list"):
             return
         self.preset_list.delete(0, "end")
@@ -1347,6 +1823,11 @@ class AIMarkerApp(ttk.Window):
         self._update_preset_info()
 
     def _selected_preset_name(self) -> str | None:
+        # 新版：从下拉选择器获取
+        if hasattr(self, "preset_selector"):
+            return self.preset_selector_var.get() or None
+
+        # 旧版：从Listbox获取
         if not hasattr(self, "preset_list"):
             return None
         selected = self.preset_list.curselection()
@@ -1431,13 +1912,33 @@ class AIMarkerApp(ttk.Window):
         self.set_status("已补足10套评分标准方案")
 
     def refresh_history(self) -> None:
+        """刷新历史记录 - 连续批改时跳过以提升性能"""
         from storage import load_history
         if not hasattr(self, "history_text"):
             return
+        if self.continuous:
+            return  # 连续批改时不刷新，避免卡顿
         self.history_text.delete("1.0", "end")
         for r in load_history()[:100]:
             tm = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.get("timestamp", 0)))
             self.history_text.insert("end", f"{tm} | {r.get('final_score')}分 | {r.get('student_answer', '')[:80]}\n")
+
+    def export_history_selected_format(self) -> None:
+        """根据选中的格式导出历史记录"""
+        format_map = {
+            "JSON": export_json,
+            "CSV": export_csv,
+            "HTML": export_html,
+            "Word": export_docx,
+            "Excel": export_xlsx,
+            "PDF": export_pdf,
+        }
+        selected_format = self.export_format_var.get()
+        export_func = format_map.get(selected_format)
+        if export_func:
+            self._export(export_func)
+        else:
+            self.set_status(f"未知导出格式：{selected_format}")
 
     def _export(self, func) -> None:
         path = func()
@@ -1482,27 +1983,25 @@ class AIMarkerApp(ttk.Window):
         """折叠/展开评分说明"""
         if self.comment_expanded:
             self.comment_view.pack_forget()
-            self.comment_toggle_btn.configure(text="▼ 展开")
+            self.comment_toggle_btn.configure(text="▼ 展开查看详细说明")
             self.comment_expanded = False
         else:
-            self.comment_view.pack(fill="both", pady=(8, 0))
-            self.comment_toggle_btn.configure(text="▲ 收起")
+            self.comment_view.pack(fill="both", pady=(theme.SPACING["sm"], 0))
+            self.comment_toggle_btn.configure(text="▲ 收起说明")
             self.comment_expanded = True
-        # 更新滚动区域
-        self.work_canvas.configure(scrollregion=self.work_canvas.bbox("all"))
+        # scrollregion会自动更新，无需手动调用
 
     def toggle_output(self) -> None:
         """折叠/展开AI详细输出"""
         if self.output_expanded:
             self.output.pack_forget()
-            self.output_toggle_btn.configure(text="▼ 展开")
+            self.output_toggle_btn.configure(text="▼ 展开查看技术日志")
             self.output_expanded = False
         else:
-            self.output.pack(fill="both", pady=(8, 0))
-            self.output_toggle_btn.configure(text="▲ 收起")
+            self.output.pack(fill="both", pady=(theme.SPACING["sm"], 0))
+            self.output_toggle_btn.configure(text="▲ 收起日志")
             self.output_expanded = True
-        # 更新滚动区域
-        self.work_canvas.configure(scrollregion=self.work_canvas.bbox("all"))
+        # scrollregion会自动更新，无需手动调用
 
 
 def run_app() -> None:

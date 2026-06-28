@@ -86,8 +86,8 @@ def export_docx(path: Path | None = None) -> Path:
     records = load_history()
     target = path or DATA_DIR / f"评阅历史_{time.strftime('%Y%m%d_%H%M%S')}.docx"
     try:
-        from docx import Document
-    except Exception:
+        from docx import Document  # type: ignore
+    except ImportError:
         return export_html(target.with_suffix(".html"))
     doc = Document()
     doc.add_heading("评阅历史", level=1)
@@ -117,8 +117,8 @@ def export_xlsx(path: Path | None = None) -> Path:
     records = load_history()
     target = path or DATA_DIR / f"评阅历史_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
     try:
-        from openpyxl import Workbook
-    except Exception:
+        from openpyxl import Workbook  # type: ignore
+    except ImportError:
         return export_csv(target.with_suffix(".csv"))
     wb = Workbook()
     ws = wb.active
