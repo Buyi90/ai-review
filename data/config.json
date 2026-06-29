@@ -52,7 +52,7 @@
   "subject": "",
   "question_type": "",
   "question": "",
-  "answer": "第1空：①\n第2空：②\n第3空：胞嘧啶脱氧核苷酸\n第4空：氢键\n第5空：解旋酶\n第6空：DNA 聚合酶\n第7空：半保留复制、边解旋边复制、多起点复制\n第8空：1/150\n第9空：7%\n第10空：900",
+  "answer": "第1空：基因通常是具有遗传效应的 DNA(b)片段\n第2空：基因在染色体(a)上呈线性排列\n第3空：脱氧核苷酸(c)是组成 DNA(b)的基本单位\n第4空：性染色体\n第5空：伴性遗传\n第6空：分离\n第7空：双螺旋结构\n第8空：10%\n第9空：1/4\n第10空：",
   "rubric": "每题一分",
   "material_images": [],
   "scoring": {
@@ -67,7 +67,7 @@
   },
   "workflow": {
     "mode": "normal",
-    "recognition_mode": "direct",
+    "recognition_mode": "ocr_first",
     "primary_enabled": true,
     "dual_enabled": false,
     "arbitration_enabled": false,
@@ -75,16 +75,16 @@
     "primary_provider_name": "火山引擎",
     "secondary_provider_name": "5plus1官方",
     "arbitration_provider_name": "5plus1官方",
-    "ocr_provider_name": "OpenAI兼容",
+    "ocr_provider_name": "火山引擎",
     "ocr_provider": {
-      "name": "OpenAI兼容",
-      "endpoint": "https://api.openai.com/v1/chat/completions",
-      "api_key": "",
-      "model": "gpt-4o",
+      "name": "火山引擎",
+      "endpoint": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "api_key": "74ceeef5-05fb-4a8e-b5d0-16e755c1a8e7",
+      "model": "doubao-seed-2-0-lite-260428",
       "reasoning_effort": "minimal",
       "models": [
-        "gpt-4o",
-        "gpt-4o-mini"
+        "doubao-seed-2-0-lite-260428",
+        "doubao-seed-2-0-pro-260215"
       ],
       "source": "network"
     },
@@ -112,8 +112,8 @@
       ],
       "source": "network"
     },
-    "target_count_enabled": false,
-    "target_count": 0,
+    "target_count_enabled": true,
+    "target_count": 52,
     "retry_limit": 5,
     "confirm_before_submit": true,
     "normal_countdown": 5,
@@ -127,19 +127,19 @@
     {
       "name": "识别框",
       "kind": "recognition",
-      "x": 213,
-      "y": 179,
-      "width": 432,
-      "height": 766,
+      "x": 207,
+      "y": 154,
+      "width": 671,
+      "height": 612,
       "color": "#2e7d32",
       "enabled": true
     },
     {
       "name": "打分框",
       "kind": "score",
-      "x": 1768,
-      "y": 272,
-      "width": 40,
+      "x": 1780,
+      "y": 217,
+      "width": 52,
       "height": 30,
       "color": "#1565c0",
       "enabled": true
@@ -147,8 +147,8 @@
     {
       "name": "提交框",
       "kind": "submit",
-      "x": 1815,
-      "y": 420,
+      "x": 1823,
+      "y": 345,
       "width": 57,
       "height": 30,
       "color": "#ef6c00",
